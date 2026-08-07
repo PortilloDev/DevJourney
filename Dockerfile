@@ -17,6 +17,11 @@ RUN npm run build
 ################################################################################
 FROM composer:2 AS vendor
 
+# filament/support requires ext-intl; the composer:2 base image doesn't ship it.
+RUN apk add --no-cache icu-dev g++ make autoconf \
+    && docker-php-ext-install intl \
+    && apk del g++ make autoconf
+
 WORKDIR /app
 COPY composer.json composer.lock ./
 RUN composer install \
@@ -35,8 +40,9 @@ FROM php:8.4-fpm AS app
 RUN apt-get update && apt-get install -y \
         git curl zip unzip libpng-dev libjpeg-dev \
         libfreetype6-dev libonig-dev libxml2-dev libzip-dev \
+        libicu-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip opcache \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip opcache intl \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && rm -rf /var/lib/apt/lists/*
