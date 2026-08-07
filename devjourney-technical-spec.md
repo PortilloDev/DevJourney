@@ -37,14 +37,14 @@ DevJourney is a personal professional platform with two sides:
 | Database | MySQL | 8.x |
 | Containerization | Docker | Docker Compose for local dev |
 | CI/CD | GitHub Actions | Lint, test, build, deploy |
-| Hosting | AWS | ECS Fargate or EC2 (see Section 9) |
+| Hosting | DigitalOcean or Hetzner | Single VPS with Docker (see Section 9) |
 | VCS | GitHub | Monorepo |
 | Frontend | Blade + Tailwind CSS + Alpine.js | Server-rendered, minimal JS |
 | Admin UI | Filament PHP | v3 — Laravel admin panel |
 | Search | Laravel Scout + Meilisearch | Full-text search on posts/challenges |
 | Cache | Redis | Sessions, cache, queues |
-| Media | S3 + CloudFront | Image/file storage and CDN |
-| Mail | SES or Mailgun | Transactional emails, newsletter |
+| Media | Local disk + Cloudflare CDN | Image/file storage, CDN via reverse proxy |
+| Mail | Mailgun or Resend | Transactional emails (free tier) |
 
 ---
 
@@ -54,25 +54,25 @@ DevJourney is a personal professional platform with two sides:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                   CloudFront CDN                │
+│              Cloudflare (DNS + CDN)             │
 └──────────────────────┬──────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────┐
-│              ALB / Load Balancer                │
+│            Nginx (reverse proxy + SSL)          │
 └──────────────────────┬──────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────┐
-│           Laravel App (ECS / EC2)               │
+│     VPS (DigitalOcean / Hetzner) — Docker       │
 │  ┌─────────────┐  ┌─────────────┐              │
 │  │ Public Site  │  │  Dashboard  │              │
 │  │   (Blade)    │  │ (Filament)  │              │
 │  └─────────────┘  └─────────────┘              │
-└───────┬──────────────┬──────────────┬───────────┘
-        │              │              │
-   ┌────▼────┐   ┌─────▼─────┐  ┌────▼────┐
-   │  MySQL  │   │   Redis   │  │   S3    │
-   │  (RDS)  │   │(ElastiC.) │  │ (media) │
-   └─────────┘   └───────────┘  └─────────┘
+│                                                 │
+│  ┌─────────┐  ┌─────────┐  ┌──────────┐       │
+│  │  MySQL  │  │  Redis  │  │  Media   │       │
+│  │  8.x   │  │  7.x    │  │ (volume) │       │
+│  └─────────┘  └─────────┘  └──────────┘       │
+└─────────────────────────────────────────────────┘
 ```
 
 ### 3.2 Application Structure
@@ -334,7 +334,7 @@ volumes:
   meilisearch_data:
 ```
 
-### 6.2 Dockerfile
+### 6.2 Dockerfile (Local Development)
 
 ```dockerfile
 FROM php:8.4-fpm
@@ -344,25 +344,24 @@ RUN apt-get update && apt-get install -y \
     git curl zip unzip libpng-dev libjpeg-dev \
     libfreetype6-dev libonig-dev libxml2-dev libzip-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip opcache redis
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip opcache \
+    && pecl install redis && docker-php-ext-enable redis \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Node.js (for Vite asset compilation)
+# Node.js (for Vite dev server)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
 WORKDIR /var/www/html
 
-COPY . .
-
-RUN composer install --no-dev --optimize-autoloader
-RUN npm ci && npm run build
-
 EXPOSE 8000
 CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
 ```
+
+> **Note**: The production Dockerfile (`Dockerfile.prod`) uses a multi-stage build with php-fpm + Nginx. See Section 9.4.
 
 ---
 
@@ -530,60 +529,285 @@ jobs:
       - run: php artisan migrate --force
       - run: php artisan test --coverage --min=70
 
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
-      - uses: aws-actions/amazon-ecr-login@v2
-      - name: Build and push Docker image
-        run: |
-          docker build -t devjourney .
-          docker tag devjourney:latest ${{ secrets.ECR_REGISTRY }}/devjourney:latest
-          docker push ${{ secrets.ECR_REGISTRY }}/devjourney:latest
-      - name: Deploy to ECS
-        run: |
-          aws ecs update-service \
-            --cluster devjourney-cluster \
-            --service devjourney-service \
-            --force-new-deployment
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/devjourney
+            git pull origin main
+            docker compose -f docker-compose.prod.yml build --no-cache app
+            docker compose -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.prod.yml exec app php artisan migrate --force
+            docker compose -f docker-compose.prod.yml exec app php artisan config:cache
+            docker compose -f docker-compose.prod.yml exec app php artisan route:cache
+            docker compose -f docker-compose.prod.yml exec app php artisan view:cache
+            docker compose -f docker-compose.prod.yml exec app php artisan queue:restart
 ```
 
 ---
 
-## 9. AWS Infrastructure
+## 9. Infrastructure (VPS + Docker)
 
-### 9.1 Services Used
+### 9.1 Hosting Options
 
-| Service | Purpose |
+| Provider | Plan | Specs | Monthly Cost | Notes |
+|---|---|---|---|---|
+| **Hetzner** (recommended) | CX22 | 2 vCPU, 4 GB RAM, 40 GB SSD | ~€4.50 | Best price/performance, EU datacenter (Falkenstein/Helsinki — low latency from Madrid) |
+| DigitalOcean | Basic Droplet | 1 vCPU, 2 GB RAM, 50 GB SSD | $12 | Simpler UI, great docs, wider community |
+| DigitalOcean | Basic Droplet | 1 vCPU, 1 GB RAM, 25 GB SSD | $6 | Minimum viable (tight with Meilisearch) |
+
+**Recommended starting point: Hetzner CX22** — 4 GB RAM is comfortable for running Laravel + MySQL + Redis + Meilisearch + Nginx all in Docker on the same machine.
+
+### 9.2 Services Stack
+
+| Service | Purpose | How |
+|---|---|---|
+| VPS (Hetzner/DO) | Run all Docker containers | Single server with Docker Compose |
+| Cloudflare (free) | DNS, CDN, SSL, DDoS protection | Proxy mode enabled, auto SSL |
+| Nginx | Reverse proxy, static files, SSL termination | Docker container or host-level |
+| MySQL 8.x | Database | Docker container with named volume |
+| Redis 7.x | Session, cache, queues | Docker container |
+| Meilisearch | Full-text search | Docker container with named volume |
+| Mailgun or Resend | Transactional email | Free tier (Mailgun: 1000/month, Resend: 3000/month) |
+| GitHub Container Registry | Docker image storage (optional) | Free for public repos |
+| Hetzner Volumes (optional) | Expandable block storage for media | Attach extra SSD if disk fills up |
+
+### 9.3 Production Docker Compose
+
+```yaml
+# docker-compose.prod.yml
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    volumes:
+      - media_data:/var/www/html/storage/app/public
+      - .env:/var/www/html/.env:ro
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - devjourney
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - media_data:/var/www/html/storage/app/public:ro
+      - certbot_data:/etc/letsencrypt:ro
+    depends_on:
+      - app
+    networks:
+      - devjourney
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    networks:
+      - devjourney
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - devjourney
+
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_KEY}
+      MEILI_ENV: production
+    volumes:
+      - meilisearch_data:/meili_data
+    networks:
+      - devjourney
+
+volumes:
+  mysql_data:
+  redis_data:
+  meilisearch_data:
+  media_data:
+  certbot_data:
+
+networks:
+  devjourney:
+    driver: bridge
+```
+
+### 9.4 Production Dockerfile
+
+```dockerfile
+# Dockerfile.prod — multi-stage build
+FROM node:20-alpine AS assets
+WORKDIR /build
+COPY package*.json ./
+RUN npm ci
+COPY resources/ resources/
+COPY vite.config.js tailwind.config.js postcss.config.js ./
+RUN npm run build
+
+FROM php:8.4-fpm AS app
+RUN apt-get update && apt-get install -y \
+    git curl zip unzip libpng-dev libjpeg-dev \
+    libfreetype6-dev libonig-dev libxml2-dev libzip-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip opcache \
+    && pecl install redis && docker-php-ext-enable redis \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY docker/php/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY docker/php/php.ini /usr/local/etc/php/conf.d/custom.ini
+
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+COPY . .
+COPY --from=assets /build/public/build public/build
+
+RUN composer install --no-dev --optimize-autoloader --no-interaction \
+    && php artisan storage:link \
+    && chown -R www-data:www-data storage bootstrap/cache
+
+USER www-data
+EXPOSE 9000
+CMD ["php-fpm"]
+```
+
+### 9.5 Nginx Configuration
+
+```nginx
+server {
+    listen 80;
+    server_name devjourney.dev www.devjourney.dev;
+
+    # Cloudflare handles SSL — this serves behind the proxy
+    root /var/www/html/public;
+    index index.php;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Static assets — long cache, served by Nginx directly
+    location ~* \.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff2?)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # Media uploads
+    location /storage {
+        alias /var/www/html/storage/app/public;
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+
+    # Laravel
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass app:9000;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_hide_header X-Powered-By;
+    }
+
+    location ~ /\.(?!well-known) {
+        deny all;
+    }
+}
+```
+
+### 9.6 Server Setup Checklist (One-Time)
+
+1. Create VPS (Hetzner CX22 / DigitalOcean Droplet).
+2. Point domain DNS to Cloudflare → Cloudflare proxies to VPS IP.
+3. SSH into server, install Docker + Docker Compose.
+4. Create deploy user with SSH key (used by GitHub Actions).
+5. Clone repo to `/var/www/devjourney`.
+6. Copy `.env.production` to `.env`.
+7. Run `docker compose -f docker-compose.prod.yml up -d`.
+8. Run initial migrations: `docker compose exec app php artisan migrate --seed`.
+9. Set up automated backups (see Section 9.7).
+
+### 9.7 Backup Strategy
+
+```bash
+#!/bin/bash
+# /opt/scripts/backup.sh — run daily via cron
+DATE=$(date +%Y-%m-%d_%H%M)
+BACKUP_DIR=/opt/backups
+
+# Database dump
+docker compose -f /var/www/devjourney/docker-compose.prod.yml exec -T mysql \
+  mysqldump -u${DB_USERNAME} -p${DB_PASSWORD} ${DB_DATABASE} \
+  | gzip > ${BACKUP_DIR}/db_${DATE}.sql.gz
+
+# Media files
+tar -czf ${BACKUP_DIR}/media_${DATE}.tar.gz \
+  /var/www/devjourney/storage/app/public/
+
+# Keep only last 7 days
+find ${BACKUP_DIR} -name "*.gz" -mtime +7 -delete
+
+# Optional: sync to a second location (Hetzner Storage Box, Backblaze B2)
+# rclone sync ${BACKUP_DIR} remote:devjourney-backups/
+```
+
+Cron: `0 3 * * * /opt/scripts/backup.sh >> /var/log/backup.log 2>&1`
+
+### 9.8 Monitoring (Lightweight)
+
+For a personal project, heavy monitoring is overkill. Recommended:
+
+- **Uptime**: UptimeRobot (free, 5-min checks) or Hetrixtools.
+- **Server metrics**: `htop`, `docker stats`, or install Netdata (lightweight dashboard).
+- **App errors**: Laravel log files (`storage/logs/`) + optional Sentry free tier.
+- **Disk alerts**: Simple cron script that emails if disk > 80%.
+
+### 9.9 Monthly Cost Estimate
+
+| Item | Cost |
 |---|---|
-| ECS Fargate (or EC2) | Run the Laravel app container |
-| RDS MySQL 8.x | Managed database |
-| ElastiCache Redis | Session, cache, queues |
-| S3 | Media storage (images, files) |
-| CloudFront | CDN for static assets and media |
-| ECR | Docker image registry |
-| Route 53 | DNS management |
-| ACM | SSL/TLS certificates |
-| SES | Transactional email |
-| CloudWatch | Logs and monitoring |
-| Secrets Manager | Environment secrets |
+| Hetzner CX22 | €4.50 |
+| Cloudflare | Free |
+| Domain (.dev) | ~€12/year (~€1/month) |
+| Mailgun / Resend | Free tier |
+| UptimeRobot | Free tier |
+| **Total** | **~€6/month** |
 
-### 9.2 Cost Optimization (Personal Project)
-
-For initial launch, a cost-effective option:
-
-- **EC2 t3.micro** (free tier eligible) instead of Fargate.
-- **RDS db.t3.micro** (free tier eligible).
-- **ElastiCache t3.micro** or skip Redis initially and use file/database cache.
-- **S3 + CloudFront** — minimal cost at low traffic.
-- Estimated monthly cost: **$15–30 USD** during low-traffic phase.
+If choosing DigitalOcean instead: **~$7–13/month** depending on droplet size.
 
 ---
 
@@ -705,18 +929,20 @@ These are out of scope for v1 but worth planning for:
 
 ### Phase 4 — Dashboard Extras (Week 6)
 - [ ] Site settings CRUD in Filament.
-- [ ] Media library with S3 upload.
+- [ ] Media library with local disk upload (volume-mounted).
 - [ ] Milestone management + progress timeline page.
 - [ ] Dashboard widgets (stats, calendar, English progression chart).
 - [ ] Meilisearch integration for full-text search.
 
 ### Phase 5 — CI/CD & Deployment (Week 7)
-- [ ] GitHub Actions pipeline (lint, test, build, deploy).
-- [ ] AWS infrastructure setup (ECS or EC2, RDS, S3, CloudFront).
-- [ ] Production Dockerfile optimization (multi-stage).
-- [ ] Environment secrets management.
-- [ ] Domain setup + SSL (Route 53 + ACM).
-- [ ] Monitoring (CloudWatch logs, health checks).
+- [ ] GitHub Actions pipeline (lint, test, build, deploy via SSH).
+- [ ] VPS provisioning (Hetzner CX22 or DigitalOcean Droplet).
+- [ ] Production Docker Compose + multi-stage Dockerfile.
+- [ ] Nginx reverse proxy configuration.
+- [ ] Domain setup + Cloudflare DNS/CDN/SSL.
+- [ ] Automated daily backups (DB dump + media).
+- [ ] UptimeRobot monitoring + Sentry error tracking (free tiers).
+- [ ] GitHub Secrets for SSH deploy credentials.
 
 ### Phase 6 — Launch & Content (Week 8)
 - [ ] Seed initial content: 3–5 journal posts, 10+ challenges, 3 projects.
@@ -737,25 +963,23 @@ APP_DEBUG=false
 APP_URL=https://devjourney.dev
 
 DB_CONNECTION=mysql
-DB_HOST=devjourney-db.xxxxx.eu-west-1.rds.amazonaws.com
+DB_HOST=mysql          # Docker service name
 DB_PORT=3306
 DB_DATABASE=devjourney
 DB_USERNAME=devjourney
 DB_PASSWORD=
+DB_ROOT_PASSWORD=      # Used by MySQL container
 
-CACHE_DRIVER=redis
+CACHE_STORE=redis
 SESSION_DRIVER=redis
 QUEUE_CONNECTION=redis
-REDIS_HOST=devjourney-redis.xxxxx.cache.amazonaws.com
+REDIS_HOST=redis       # Docker service name
 
-FILESYSTEM_DISK=s3
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_DEFAULT_REGION=eu-west-1
-AWS_BUCKET=devjourney-media
-AWS_URL=https://cdn.devjourney.dev
+FILESYSTEM_DISK=public  # Local disk, served via Nginx
 
-MAIL_MAILER=ses
+MAIL_MAILER=mailgun     # Or resend
+MAILGUN_DOMAIN=
+MAILGUN_SECRET=
 
 SCOUT_DRIVER=meilisearch
 MEILISEARCH_HOST=http://meilisearch:7700
@@ -808,11 +1032,14 @@ Key test scenarios:
 - Rate limiting on login route.
 - CSRF protection on all forms.
 - Content Security Policy headers.
-- S3 bucket is private; serve media through signed URLs or CloudFront.
+- Media stored on local volume behind Nginx; no public directory listing.
 - Keep dependencies updated (Dependabot enabled on GitHub).
-- All secrets in AWS Secrets Manager or GitHub Secrets — never in code.
+- Production secrets in `.env` file on server (not in repo) + GitHub Secrets for CI/CD.
+- SSH access via key only — disable password auth.
+- UFW firewall: only ports 22, 80, 443 open.
+- Fail2ban for SSH brute-force protection.
 
 ---
 
-*Document version: 1.0 — August 2026*
-*Stack: Laravel 11+ · PHP 8.4 · MySQL 8 · Docker · AWS · GitHub Actions · Filament v3 · Tailwind CSS · Alpine.js*
+*Document version: 1.1 — August 2026*
+*Stack: Laravel 11+ · PHP 8.4 · MySQL 8 · Docker · Hetzner/DigitalOcean · GitHub Actions · Filament v3 · Tailwind CSS · Alpine.js*
