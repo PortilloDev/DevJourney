@@ -1,0 +1,43 @@
+@import 'highlight.js/styles/github-dark.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    html {
+        scroll-behavior: smooth;
+        scroll-padding-top: 5rem;
+    }
+
+    [x-cloak] {
+        display: none !important;
+    }
+}
+
+@layer components {
+    /* Permalink anchors added by the Markdown renderer. */
+    .prose .heading-anchor {
+        @apply ml-2 text-accent-500 no-underline opacity-0 transition-opacity;
+    }
+
+    .prose h2:hover .heading-anchor,
+    .prose h3:hover .heading-anchor,
+    .prose h4:hover .heading-anchor {
+        @apply opacity-100;
+    }
+
+    /* Code block wrapper with copy button. */
+    .prose pre {
+        @apply relative rounded-lg border border-slate-700/60 bg-slate-900 text-sm;
+    }
+
+    .copy-btn {
+        @apply absolute right-2 top-2 rounded-md bg-slate-700/70 px-2 py-1 text-xs
+        text-slate-200 opacity-0 transition hover:bg-slate-600 focus:opacity-100;
+    }
+
+    .prose pre:hover .copy-btn {
+        @apply opacity-100;
+    }
+}

@@ -1,0 +1,17 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+
+    paths:
+        - app
+
+    excludePaths:
+        - app/Filament/*/*/*.php
+
+    ignoreErrors:
+        # Framework generics (Builder<TModel>, HasFactory<TFactory>, relation
+        # generics) add noise without value in a small app — silence them.
+        - '#uses generic trait .* but does not specify its types#'
+        - '#return type with generic class .* does not specify its types#'
