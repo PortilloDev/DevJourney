@@ -24,7 +24,6 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        $this->seedAdmin();
         $this->seedSettings();
         $categories = $this->seedCategories();
         $tags = $this->seedTags();
@@ -34,17 +33,6 @@ class DatabaseSeeder extends Seeder
         $this->seedMilestones();
     }
 
-    private function seedAdmin(): void
-    {
-        User::updateOrCreate(
-            ['email' => 'admin@devjourney.test'],
-            [
-                'name' => 'DevJourney Admin',
-                'password' => Hash::make('password'),
-                'email_verified_at' => now(),
-            ],
-        );
-    }
 
     private function seedSettings(): void
     {
@@ -58,8 +46,8 @@ class DatabaseSeeder extends Seeder
         $settings->set('author_name', 'DevJourney', 'general');
         $settings->set('now_content', "Right now I'm:\n\n- Practicing **system design** interviews weekly.\n- Reading *Implementing Domain-Driven Design*.\n- Pushing my English toward **B2** — every post here is a rep.\n- Shipping small Laravel side projects to keep the fundamentals sharp.", 'now', 'textarea');
         $settings->set('now_updated_at', now()->toDateString(), 'now');
-        $settings->set('social_github', 'https://github.com', 'social');
-        $settings->set('social_linkedin', 'https://linkedin.com', 'social');
+        $settings->set('social_github', 'https://github.com/PortilloDev', 'social');
+        $settings->set('social_linkedin', 'https://www.linkedin.com/in/ivan-portillo-perez/', 'social');
     }
 
     /**
