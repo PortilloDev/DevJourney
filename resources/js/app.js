@@ -1,4 +1,5 @@
 import './bootstrap';
+import './tracker';
 
 import Alpine from 'alpinejs';
 import collapse from '@alpinejs/collapse';
