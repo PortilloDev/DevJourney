@@ -27,7 +27,7 @@ class AdminAccessTest extends TestCase
     {
         // The panel is restricted to the allow-listed admin email (see
         // User::canAccessPanel()), so create that exact admin account.
-        $adminEmail = 'admin@devjourney.test';
+        $adminEmail = 'admin@email.test';
         config(['app.filament_admin_email' => $adminEmail]);
 
         $user = User::factory()->create(['email' => $adminEmail]);
