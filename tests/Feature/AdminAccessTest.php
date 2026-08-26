@@ -25,7 +25,12 @@ class AdminAccessTest extends TestCase
 
     public function test_authenticated_users_can_open_the_dashboard(): void
     {
-        $user = User::factory()->create();
+        // The panel is restricted to the allow-listed admin email (see
+        // User::canAccessPanel()), so create that exact admin account.
+        $adminEmail = 'admin@devjourney.test';
+        config(['app.filament_admin_email' => $adminEmail]);
+
+        $user = User::factory()->create(['email' => $adminEmail]);
 
         $this->actingAs($user)
             ->get('/admin')
