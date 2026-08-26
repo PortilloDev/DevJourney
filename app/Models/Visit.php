@@ -57,6 +57,10 @@ class Visit extends Model
             'user_id' => 'integer',
             'started_at' => 'datetime',
             'last_activity_at' => 'datetime',
+            // Personal data is encrypted at rest (see the security checklist).
+            'ip_address' => 'encrypted',
+            'user_agent' => 'encrypted',
+            'referer' => 'encrypted',
         ];
     }
 

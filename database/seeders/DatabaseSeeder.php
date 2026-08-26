@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+//        $this->seedAdmin();
         $this->seedSettings();
         $categories = $this->seedCategories();
         $tags = $this->seedTags();
@@ -33,6 +34,17 @@ class DatabaseSeeder extends Seeder
         $this->seedMilestones();
     }
 
+//    private function seedAdmin(): void
+//    {
+//        User::updateOrCreate(
+//            ['email' => 'admin@devjourney.test'],
+//            [
+//                'name' => 'DevJourney Admin',
+//                'password' => Hash::make('password'),
+//                'email_verified_at' => now(),
+//            ],
+//        );
+//    }
 
     private function seedSettings(): void
     {

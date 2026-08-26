@@ -4,7 +4,13 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Models\Challenge;
+use App\Models\Milestone;
+use App\Models\Post;
+use App\Models\Project;
+use App\Models\SiteSetting;
 use App\Services\MarkdownRenderer;
+use App\Services\PageCacheService;
 use App\Services\SeoMetaService;
 use App\Services\SiteSettingService;
 use Illuminate\Pagination\Paginator;
@@ -36,6 +42,19 @@ class AppServiceProvider extends ServiceProvider
 
         if ($this->app->environment('production')) {
             URL::forceScheme('https');
+        }
+
+        // Invalidate the public full-page cache whenever content changes.
+        $bump = fn () => app(PageCacheService::class)->bump();
+        foreach ([
+            Post::class,
+            Project::class,
+            Challenge::class,
+            Milestone::class,
+            SiteSetting::class,
+        ] as $model) {
+            $model::saved($bump);
+            $model::deleted($bump);
         }
     }
 }

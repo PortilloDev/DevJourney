@@ -27,7 +27,7 @@
         </header>
 
         @if($project->featured_image)
-            <img src="{{ asset('storage/'.$project->featured_image) }}" alt="{{ $project->title }}" class="mb-8 w-full rounded-xl" loading="lazy">
+            <img src="{{ asset('storage/'.$project->featured_image) }}" alt="{{ $project->title }}" class="mb-8 w-full rounded-xl" loading="lazy" decoding="async">
         @endif
 
         @if($project->body_html)

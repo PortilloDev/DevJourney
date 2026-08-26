@@ -3,7 +3,7 @@
 <article class="group flex h-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-accent-400 hover:shadow-lg dark:border-slate-800 dark:bg-slate-900 dark:hover:border-accent-600">
     @if($project->featured_image)
         <a href="{{ route('projects.show', $project) }}" class="block aspect-video overflow-hidden bg-slate-100 dark:bg-slate-800">
-            <img src="{{ asset('storage/'.$project->featured_image) }}" alt="{{ $project->title }}" loading="lazy" class="h-full w-full object-cover transition group-hover:scale-105">
+            <img src="{{ asset('storage/'.$project->featured_image) }}" alt="{{ $project->title }}" loading="lazy" decoding="async" class="h-full w-full object-cover transition group-hover:scale-105">
         </a>
     @endif
 

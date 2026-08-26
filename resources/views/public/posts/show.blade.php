@@ -31,7 +31,7 @@
             </header>
 
             @if($post->featured_image)
-                <img src="{{ asset('storage/'.$post->featured_image) }}" alt="{{ $post->title }}" class="mb-8 w-full rounded-xl" loading="lazy">
+                <img src="{{ asset('storage/'.$post->featured_image) }}" alt="{{ $post->title }}" class="mb-8 w-full rounded-xl" loading="lazy" decoding="async">
             @endif
 
             <div class="prose prose-slate max-w-none dark:prose-invert prose-pre:p-4">

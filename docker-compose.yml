@@ -3,70 +3,109 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     volumes:
-      - .:/var/www/html
-      - vendor:/var/www/html/vendor
-      - build:/var/www/html/public/build
-    ports:
-      - "8002:8000"
+      - storage:/var/www/html/storage
     depends_on:
-      - mysql
-      - redis
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
     environment:
-      APP_ENV: local
+      APP_ENV: production
+      APP_DEBUG: "false"
+      LOG_LEVEL: error
       DB_CONNECTION: mysql
       DB_HOST: mysql
       DB_PORT: 3306
       DB_DATABASE: devjourney
       DB_USERNAME: devjourney
-      DB_PASSWORD: secret
+      DB_PASSWORD: ${DB_PASSWORD}
       CACHE_STORE: redis
       SESSION_DRIVER: redis
       QUEUE_CONNECTION: redis
       REDIS_HOST: redis
       SCOUT_DRIVER: meilisearch
       MEILISEARCH_HOST: http://meilisearch:7700
-      MAIL_MAILER: smtp
-      MAIL_HOST: mailpit
-      MAIL_PORT: 1025
+      MEILISEARCH_KEY: ${MEILISEARCH_KEY}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.devjourney.rule=Host(`TU-DOMINIO.com`)"
+      - "traefik.http.routers.devjourney.entrypoints=websecure"
+      - "traefik.http.routers.devjourney.tls.certresolver=le"
+      - "traefik.http.services.devjourney.loadbalancer.server.port=8000"
+    networks:
+      - web
+      - internal
 
   mysql:
     image: mysql:8.0
-    ports:
-      - "33008:3306"
+    restart: unless-stopped
     volumes:
       - mysql_data:/var/lib/mysql
     environment:
-      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: devjourney
       MYSQL_USER: devjourney
-      MYSQL_PASSWORD: secret
+      MYSQL_PASSWORD: ${DB_PASSWORD}
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
+    # Sin "ports": no se expone al host, solo accesible desde la red interna
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6380:6379"
+    restart: unless-stopped
+    networks:
+      - internal
+    # Sin "ports"
 
   meilisearch:
     image: getmeili/meilisearch:latest
-    ports:
-      - "7700:7700"
+    restart: unless-stopped
     volumes:
       - meilisearch_data:/meili_data
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_KEY}
+    networks:
+      - internal
+    # Sin "ports"
 
-  mailpit:
-    image: axllent/mailpit
+  # Reverse proxy con HTTPS automático (Let's Encrypt) para tu dominio de Hostinger
+  traefik:
+    image: traefik:v3.1
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=TU-EMAIL@dominio.com"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
     ports:
-      - "8025:8025"
-      - "1025:1025"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - web
+
+# NOTA: mailpit no se incluye aquí — es una herramienta de desarrollo.
+# Configura MAIL_MAILER con un proveedor SMTP real cuando lo necesites.
 
 volumes:
   mysql_data:
   meilisearch_data:
-  vendor:
-  build:
+  storage:
+  letsencrypt:
+
+networks:
+  web:
+  internal:

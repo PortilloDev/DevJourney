@@ -23,15 +23,15 @@ class TrackVisit
         $visit = app(VisitTracker::class)->track($request);
 
         if ($visit && ! $request->cookie(VisitTracker::COOKIE)) {
-            $response->withCookie($this->visitorCookie($visit->visitor_token));
+            $response->withCookie($this->visitorCookie($visit->visitor_token, $request->isSecure()));
         }
 
         return $response;
     }
 
-    protected function visitorCookie(string $token): Cookie
+    protected function visitorCookie(string $token, bool $secure): Cookie
     {
         return cookie()
-            ->make(VisitTracker::COOKIE, $token, 60 * 24 * 365, '/', null, false, true, false, 'lax');
+            ->make(VisitTracker::COOKIE, $token, 60 * 24 * 365, '/', null, $secure, true, false, 'lax');
     }
 }

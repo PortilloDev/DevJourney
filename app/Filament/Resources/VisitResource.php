@@ -74,8 +74,7 @@ class VisitResource extends Resource
                     ->toggleable(),
                 Tables\Columns\TextColumn::make('ip_address')
                     ->label('IP')
-                    ->toggleable()
-                    ->searchable(),
+                    ->toggleable(),
                 Tables\Columns\TextColumn::make('referer')
                     ->limit(40)->icon(fn ($state) => $state ? 'heroicon-o-arrow-top-right-on-square' : null),
             ])

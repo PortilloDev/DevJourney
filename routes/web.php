@@ -44,4 +44,4 @@ Route::post('/track/heartbeat', function (Request $request): Response {
     app(VisitTracker::class)->heartbeat($request);
 
     return response()->noContent();
-});
+})->middleware('throttle:60,1');

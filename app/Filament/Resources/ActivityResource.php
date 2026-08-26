@@ -66,8 +66,7 @@ class ActivityResource extends Resource
                     ->toggleable(),
                 Tables\Columns\TextColumn::make('visit.ip_address')
                     ->label('IP')
-                    ->toggleable()
-                    ->searchable(),
+                    ->toggleable(),
                 Tables\Columns\TextColumn::make('visit.device')
                     ->label('Device')
                     ->badge()
