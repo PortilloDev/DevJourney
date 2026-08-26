@@ -41,14 +41,12 @@ class SiteSettingResource extends Resource
                 ->required()
                 ->live(),
             Forms\Components\TextInput::make('group')->default('general')->required(),
-            Forms\Components\TextInput::make('value')
-                ->visible(fn (Forms\Get $get) => $get('type') === 'text')
-                ->helperText('Stored as JSON under the hood.'),
             Forms\Components\Textarea::make('value')
-                ->rows(4)
-                ->visible(fn (Forms\Get $get) => in_array($get('type'), ['textarea', 'json'], true)),
-            Forms\Components\Toggle::make('value')
-                ->visible(fn (Forms\Get $get) => $get('type') === 'boolean'),
+                ->required()
+                ->rows(fn (Forms\Get $get) => $get('type') === 'textarea' ? 6 : 3)
+                ->formatStateUsing(fn ($state) => is_array($state) ? json_encode($state, JSON_UNESCAPED_UNICODE) : (is_bool($state) ? ($state ? 'true' : 'false') : (string) $state))
+                ->dehydrateStateUsing(fn ($state, Forms\Get $get) => $get('type') === 'boolean' ? filter_var($state, FILTER_VALIDATE_BOOLEAN) : $state)
+                ->helperText('Stored as JSON under the hood. Use true/false for boolean settings.'),
         ]);
     }
 

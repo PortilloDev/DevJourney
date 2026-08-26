@@ -32,6 +32,14 @@ class HomeController extends Controller
         $latestPosts = Post::query()
             ->latestPublished()
             ->with(['category', 'tags'])
+            ->where('featured', false)
+            ->limit(4)
+            ->get();
+
+        $featuredPosts = Post::query()
+            ->latestPublished()
+            ->featured()
+            ->with(['category', 'tags'])
             ->limit(4)
             ->get();
 
@@ -59,6 +67,7 @@ class HomeController extends Controller
 
         return view('public.home', compact(
             'latestPosts',
+            'featuredPosts',
             'featuredChallenge',
             'projects',
             'milestones',

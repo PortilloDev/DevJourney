@@ -69,6 +69,11 @@ class PostResource extends Resource
                             ->default(PostStatus::Draft->value)
                             ->required()
                             ->live(),
+                        Forms\Components\Toggle::make('featured')
+                            ->label('Featured')
+                            ->helperText('Show this post in the highlighted row on the home page and the journal.')
+                            ->default(false)
+                            ->inline(false),
                         Forms\Components\DateTimePicker::make('published_at')
                             ->label('Publish at')
                             ->helperText('Leave empty for now; set a future date to schedule.')
@@ -125,6 +130,14 @@ class PostResource extends Resource
                     ->label('EN')
                     ->badge()
                     ->formatStateUsing(fn (EnglishLevel $state) => $state->value),
+                Tables\Columns\IconColumn::make('featured')
+                    ->label('')
+                    ->boolean()
+                    ->trueIcon('heroicon-o-star')
+                    ->trueColor('warning')
+                    ->width(24)
+                    ->toggleable()
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->color(fn (PostStatus $state) => match ($state) {
@@ -143,6 +156,7 @@ class PostResource extends Resource
             ->defaultSort('published_at', 'desc')
             ->filters([
                 Tables\Filters\SelectFilter::make('status')->options(PostStatus::options()),
+                Tables\Filters\TernaryFilter::make('featured')->label('Featured'),
                 Tables\Filters\SelectFilter::make('english_level')->options(EnglishLevel::options()),
                 Tables\Filters\SelectFilter::make('category')->relationship('category', 'name'),
             ])

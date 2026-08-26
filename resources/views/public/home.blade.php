@@ -50,6 +50,21 @@
         </section>
     @endif
 
+    {{-- Featured journal entries --}}
+    @if($featuredPosts->isNotEmpty())
+        <section class="mb-16">
+            <div class="mb-6 flex items-end justify-between">
+                <h2 class="text-2xl font-bold">Featured</h2>
+                <span class="text-sm font-medium text-accent-600 dark:text-accent-400">Editor's picks</span>
+            </div>
+            <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                @foreach($featuredPosts as $post)
+                    <x-featured-post-card :post="$post" />
+                @endforeach
+            </div>
+        </section>
+    @endif
+
     {{-- Latest journal entries --}}
     <section class="mb-16">
         <div class="mb-6 flex items-end justify-between">

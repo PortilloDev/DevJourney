@@ -51,6 +51,7 @@ class Post extends Model
         'seo_description',
         'reading_minutes',
         'status',
+        'featured',
         'published_at',
     ];
 
@@ -60,6 +61,7 @@ class Post extends Model
             'english_level' => EnglishLevel::class,
             'status' => PostStatus::class,
             'reading_minutes' => 'integer',
+            'featured' => 'boolean',
             'published_at' => 'datetime',
         ];
     }
@@ -90,6 +92,12 @@ class Post extends Model
     public function scopeLatestPublished(Builder $query): Builder
     {
         return $query->published()->orderByDesc('published_at');
+    }
+
+    /** @param Builder<Post> $query */
+    public function scopeFeatured(Builder $query): Builder
+    {
+        return $query->where('featured', true);
     }
 
     public function getRouteKeyName(): string

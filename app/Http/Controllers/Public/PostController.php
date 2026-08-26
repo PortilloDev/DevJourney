@@ -22,11 +22,13 @@ class PostController extends Controller
             description: 'Learning journal entries on architecture, backend engineering, DevOps and the English journey from A2 to professional.',
         );
 
-        $posts = $this->baseQuery()->paginate(9)->withQueryString();
+        $posts = $this->baseQuery()->where('featured', false)->paginate(9)->withQueryString();
+        $featuredPosts = $this->featuredQuery()->limit(3)->get();
         $categories = Category::query()->orderBy('sort_order')->get();
 
         return view('public.posts.index', [
             'posts' => $posts,
+            'featuredPosts' => $featuredPosts,
             'categories' => $categories,
             'activeCategory' => null,
             'activeTag' => null,
@@ -78,11 +80,18 @@ class PostController extends Controller
 
         $posts = $this->baseQuery()
             ->where('category_id', $category->id)
+            ->where('featured', false)
             ->paginate(9)
             ->withQueryString();
 
+        $featuredPosts = $this->featuredQuery()
+            ->where('category_id', $category->id)
+            ->limit(3)
+            ->get();
+
         return view('public.posts.index', [
             'posts' => $posts,
+            'featuredPosts' => $featuredPosts,
             'categories' => Category::query()->orderBy('sort_order')->get(),
             'activeCategory' => $category,
             'activeTag' => null,
@@ -99,12 +108,19 @@ class PostController extends Controller
         $posts = $tag->posts()
             ->published()
             ->with(['category', 'tags'])
+            ->where('featured', false)
             ->latest('published_at')
             ->paginate(9)
             ->withQueryString();
 
+        $featuredPosts = $this->featuredQuery()
+            ->whereHas('tags', fn ($q) => $q->whereKey($tag->getKey()))
+            ->limit(3)
+            ->get();
+
         return view('public.posts.index', [
             'posts' => $posts,
+            'featuredPosts' => $featuredPosts,
             'categories' => Category::query()->orderBy('sort_order')->get(),
             'activeCategory' => null,
             'activeTag' => $tag,
@@ -118,6 +134,18 @@ class PostController extends Controller
     {
         return Post::query()
             ->published()
+            ->with(['category', 'tags'])
+            ->latest('published_at');
+    }
+
+    /**
+     * @return Builder<Post>
+     */
+    private function featuredQuery()
+    {
+        return Post::query()
+            ->published()
+            ->featured()
             ->with(['category', 'tags'])
             ->latest('published_at');
     }
