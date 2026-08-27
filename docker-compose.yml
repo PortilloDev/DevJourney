@@ -102,10 +102,26 @@ services:
     networks:
       - web
 
+  portainer:
+      image: portainer/portainer-ce:latest
+      restart: unless-stopped
+      volumes:
+          - /var/run/docker.sock:/var/run/docker.sock:ro
+          - portainer_data:/data
+      networks:
+          - web
+      labels:
+          - "traefik.enable=true"
+          - "traefik.http.routers.portainer.rule=Host(`logs.iabackendjourney.com`)"
+          - "traefik.http.routers.portainer.entrypoints=websecure"
+          - "traefik.http.routers.portainer.tls.certresolver=le"
+          - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
 # NOTA: mailpit no se incluye aquí — es una herramienta de desarrollo.
 # Configura MAIL_MAILER con un proveedor SMTP real cuando lo necesites.
 
 volumes:
+  portainer_data:
   mysql_data:
   meilisearch_data:
   storage:
