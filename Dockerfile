@@ -32,22 +32,32 @@ RUN composer install \
     --no-interaction
 
 ################################################################################
-# Stage 3 — Application runtime
+# Stage 3 — Application runtime (PHP-FPM + Nginx vía Supervisor)
 ################################################################################
 FROM php:8.4-fpm AS app
 
-# System dependencies + PHP extensions.
+# System dependencies + PHP extensions + Nginx + Supervisor.
 RUN apt-get update && apt-get install -y \
         git curl zip unzip libpng-dev libjpeg-dev \
         libfreetype6-dev libonig-dev libxml2-dev libzip-dev \
-        libicu-dev \
+        libicu-dev nginx supervisor \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip opcache intl \
     && pecl install redis \
     && docker-php-ext-enable redis \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/nginx/sites-enabled/default \
+    && mkdir -p /run/php
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# PHP-FPM escucha por socket unix en vez de puerto TCP (más rápido, sin exponer 9000)
+RUN sed -i 's/^listen = .*/listen = \/run\/php\/php-fpm.sock/' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's/^;listen.owner = .*/listen.owner = www-data/' /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's/^;listen.group = .*/listen.group = www-data/' /usr/local/etc/php-fpm.d/www.conf
+
+COPY docker-fpm-setup/nginx.conf /etc/nginx/sites-enabled/app.conf
+COPY docker-fpm-setup/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 WORKDIR /var/www/html
 
@@ -61,4 +71,4 @@ RUN composer dump-autoload --no-dev --optimize \
     && chown -R www-data:www-data storage bootstrap/cache
 
 EXPOSE 8000
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
