@@ -5,7 +5,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     volumes:
-      - storage:/var/www/html/storage
+        - ./.env:/var/www/html/.env:ro
+        - storage:/var/www/html/storage
     depends_on:
       mysql:
         condition: service_healthy
