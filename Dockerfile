@@ -51,10 +51,10 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# PHP-FPM escucha por socket unix en vez de puerto TCP (más rápido, sin exponer 9000)
-RUN sed -i 's/^listen = .*/listen = \/run\/php\/php-fpm.sock/' /usr/local/etc/php-fpm.d/www.conf \
-    && sed -i 's/^;listen.owner = .*/listen.owner = www-data/' /usr/local/etc/php-fpm.d/www.conf \
-    && sed -i 's/^;listen.group = .*/listen.group = www-data/' /usr/local/etc/php-fpm.d/www.conf
+# PHP-FPM escucha por socket unix en vez de puerto TCP — override en archivo
+# aparte (se carga después de www.conf y gana), no depende del formato exacto
+# de la config por defecto de la imagen base.
+COPY docker-fpm-setup/zz-socket.conf /usr/local/etc/php-fpm.d/zz-socket.conf
 
 COPY docker-fpm-setup/nginx.conf /etc/nginx/sites-enabled/app.conf
 COPY docker-fpm-setup/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
