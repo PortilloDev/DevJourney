@@ -30,11 +30,15 @@ services:
       MEILISEARCH_HOST: http://meilisearch:7700
       MEILISEARCH_KEY: ${MEILISEARCH_KEY}
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.devjourney.rule=Host(`TU-DOMINIO.com`)"
-      - "traefik.http.routers.devjourney.entrypoints=websecure"
-      - "traefik.http.routers.devjourney.tls.certresolver=le"
-      - "traefik.http.services.devjourney.loadbalancer.server.port=8000"
+        - "traefik.enable=true"
+        - "traefik.http.routers.devjourney.rule=Host(`iabackendjourney.com`)"
+        - "traefik.http.routers.devjourney.entrypoints=websecure"
+        - "traefik.http.routers.devjourney.tls.certresolver=le"
+        - "traefik.http.services.devjourney.loadbalancer.server.port=8000"
+        - "traefik.http.routers.devjourney-http.rule=Host(`iabackendjourney.com`)"
+        - "traefik.http.routers.devjourney-http.entrypoints=web"
+        - "traefik.http.routers.devjourney-http.middlewares=redirect-to-https"
+        - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
     networks:
       - web
       - internal
