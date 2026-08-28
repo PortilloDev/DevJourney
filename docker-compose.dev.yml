@@ -86,3 +86,7 @@ volumes:
   meilisearch_data:
   vendor:
   build:
+
+networks:
+  web:
+  internal:
