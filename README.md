@@ -115,3 +115,22 @@ resources/views/
 ├── public/           # home, posts/, challenges/, projects/, about, now, progress
 └── feeds/            # rss, sitemap
 ```
+## 🚀 Deploy
+
+### 🔧 Configuración
+
+- Copia el archivo `.env.example` a `.env` y edita los valores de la variable `APP_ENV` a `local`.
+- Crea una base de datos MySQL y configura la variable `DB_DATABASE` en `.env`.
+- Crea un usuario y contraseña para la base de datos y configura la variable `DB_USERNAME` y `DB_PASSWORD` en `.env`.
+
+### 🚀 Despliegue
+
+```bash
+chmod +x deploy.sh -- la primera vez
+./deploy.sh
+```
+
+## 📝 Licencia
+
+Este proyecto está bajo la licencia MIT.
+
