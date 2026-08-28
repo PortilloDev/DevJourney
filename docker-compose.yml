@@ -39,9 +39,6 @@ services:
         - "traefik.http.routers.devjourney-http.entrypoints=web"
         - "traefik.http.routers.devjourney-http.middlewares=redirect-to-https"
         - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
-    networks:
-      - web
-      - internal
 
   mysql:
     image: mysql:8.0
@@ -58,16 +55,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - internal
-    # Sin "ports": no se expone al host, solo accesible desde la red interna
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    networks:
-      - internal
-    # Sin "ports"
 
   meilisearch:
     image: getmeili/meilisearch:latest
@@ -76,9 +67,6 @@ services:
       - meilisearch_data:/meili_data
     environment:
       MEILI_MASTER_KEY: ${MEILISEARCH_KEY}
-    networks:
-      - internal
-    # Sin "ports"
 
   # Reverse proxy con HTTPS automático (Let's Encrypt) para tu dominio de Hostinger
   traefik:
@@ -91,7 +79,7 @@ services:
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.le.acme.httpchallenge=true"
       - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.le.acme.email=ipp_1981@hotmail.com"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
       - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
     ports:
       - "80:80"
@@ -99,8 +87,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - letsencrypt:/letsencrypt
-    networks:
-      - web
 
   portainer:
       image: portainer/portainer-ce:latest
@@ -108,8 +94,6 @@ services:
       volumes:
           - /var/run/docker.sock:/var/run/docker.sock:ro
           - portainer_data:/data
-      networks:
-          - web
       labels:
           - "traefik.enable=true"
           - "traefik.http.routers.portainer.rule=Host(`logs.iabackendjourney.com`)"
@@ -126,7 +110,3 @@ volumes:
   meilisearch_data:
   storage:
   letsencrypt:
-
-networks:
-  web:
-  internal:
