@@ -12,6 +12,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      qdrant:
+        condition: service_started
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
@@ -29,6 +31,9 @@ services:
       SCOUT_DRIVER: meilisearch
       MEILISEARCH_HOST: http://meilisearch:7700
       MEILISEARCH_KEY: ${MEILISEARCH_KEY}
+      # Vector DB (Qdrant) para embeddings/búsqueda semántica.
+      QDRANT_HOST: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
     labels:
         - "traefik.enable=true"
         - "traefik.http.routers.devjourney.rule=Host(`iabackendjourney.com`)"
@@ -67,6 +72,17 @@ services:
       - meilisearch_data:/meili_data
     environment:
       MEILI_MASTER_KEY: ${MEILISEARCH_KEY}
+
+  # Vector database para búsqueda semántica por embeddings.
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      # Recomendado en producción: proteger el acceso aunque no se exponga.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+      QDRANT__SERVICE__READ_ONLY_API_KEY: ${QDRANT_READ_ONLY_API_KEY}
 
   # Reverse proxy con HTTPS automático (Let's Encrypt) para tu dominio de Hostinger
   traefik:
@@ -108,5 +124,6 @@ volumes:
   portainer_data:
   mysql_data:
   meilisearch_data:
+  qdrant_data:
   storage:
   letsencrypt:

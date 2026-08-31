@@ -12,6 +12,7 @@ services:
     depends_on:
       - mysql
       - redis
+      - qdrant
     environment:
       APP_ENV: local
       DB_CONNECTION: mysql
@@ -26,6 +27,9 @@ services:
       REDIS_HOST: redis
       SCOUT_DRIVER: meilisearch
       MEILISEARCH_HOST: http://meilisearch:7700
+      # Vector DB (Qdrant) para embeddings/búsqueda semántica.
+      QDRANT_HOST: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
       MAIL_MAILER: smtp
       MAIL_HOST: mailpit
       MAIL_PORT: 1025
@@ -74,6 +78,18 @@ services:
     volumes:
       - meilisearch_data:/meili_data
 
+  # Vector database para búsqueda semántica por embeddings (UI en :6333).
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+
   mailpit:
     image: axllent/mailpit
     ports:
@@ -84,6 +100,7 @@ volumes:
   portainer_data:
   mysql_data:
   meilisearch_data:
+  qdrant_data:
   vendor:
   build:
 
