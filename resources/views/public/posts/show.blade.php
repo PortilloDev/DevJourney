@@ -53,6 +53,9 @@
                 <a href="https://www.linkedin.com/sharing/share-offsite/?url={{ urlencode(route('posts.show', $post)) }}" rel="noopener" class="hover:text-accent-500">LinkedIn</a>
             </div>
 
+            {{-- Per-article AI chat --}}
+            <x-chat-widget :enabled="filled(config('rag.api_key'))" :post="$post" />
+
             @if($related->isNotEmpty())
                 <section class="mt-16">
                     <h2 class="mb-6 text-xl font-bold">Related posts</h2>

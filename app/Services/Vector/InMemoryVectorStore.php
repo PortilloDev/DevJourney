@@ -34,7 +34,7 @@ class InMemoryVectorStore implements VectorStore
 
     /**
      * @param  list<float>  $vector
-     * @param  array<string, mixed>|null  $filter
+     * @param  array{must?: list<array{key: string, value: mixed}>, should?: list<array{key: string, value: mixed}>}|null  $filter
      * @return list<array{id: string, score: float, payload: array<string, mixed>}>
      */
     public function search(array $vector, int $limit = 5, ?array $filter = null): array
@@ -64,7 +64,7 @@ class InMemoryVectorStore implements VectorStore
 
     /**
      * @param  array<string, mixed>  $payload
-     * @param  array<string, mixed>|null  $filter
+     * @param  array{must?: list<array{key: string, value: mixed}>, should?: list<array{key: string, value: mixed}>}|null  $filter
      */
     protected function matches(array $payload, ?array $filter): bool
     {
@@ -72,10 +72,21 @@ class InMemoryVectorStore implements VectorStore
             return true;
         }
 
-        foreach ($filter as $key => $value) {
-            if (($payload[$key] ?? null) !== $value) {
+        foreach ($filter['must'] ?? [] as $condition) {
+            if (($payload[$condition['key']] ?? null) !== $condition['value']) {
                 return false;
             }
+        }
+
+        $should = $filter['should'] ?? [];
+        if ($should !== []) {
+            foreach ($should as $condition) {
+                if (($payload[$condition['key']] ?? null) === $condition['value']) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         return true;

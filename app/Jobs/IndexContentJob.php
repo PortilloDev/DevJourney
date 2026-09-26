@@ -23,6 +23,11 @@ class IndexContentJob implements ShouldQueue
 
     public function handle(RagService $rag): void
     {
+        // The RAG stack is optional: without credentials we simply do nothing.
+        if (blank(config('rag.api_key')) || blank(config('rag.embeddings.api_key'))) {
+            return;
+        }
+
         $model = ($this->modelClass)::find($this->modelId);
 
         if ($model === null || ! $this->isIndexable($model)) {

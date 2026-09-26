@@ -37,6 +37,16 @@ CI (`.github/workflows/ci.yml`) is the definition of done: `pint --test`,
 - **Run `php artisan optimize:clear` after deploying code.** The full-page cache
   (`App\Http\Middleware\CachePublicPages`) is invalidated only by *content*
   changes, so new code can serve a stale page until the cache is cleared.
+- **Frontend changes need a rebuild.** Vite runs on the HOST (the `make npm*`
+  targets now call `npm` on the host; the container has no Node). The dev compose
+  mounts `public/build` as a **named volume** that shadows the host dir, so a host
+  build is not served until you copy it into the volume (or use `npm run dev` for
+  HMR). A stale bundle throws `ReferenceError: <component> is not defined`.
+- **Set `ASSET_URL`** to the real origin the browser uses. Docker delivers the
+  request to the container with a portless `Host`, so without `ASSET_URL`,
+  `asset()` emits `http://localhost/build/...` and assets fail to load
+  (`ERR_CONNECTION_REFUSED`). Dev: `ASSET_URL=http://localhost:8002`; prod: the
+  public https origin. See `resources/AGENTS.md`.
 - `bootstrap/app.php` must keep a **single** `->withMiddleware()` block: a second
   call overwrites the first and silently drops custom middleware.
 - Markdown is **pre-rendered on save** (model `saving` hooks →

@@ -8,13 +8,27 @@ abstract class TestCase extends BaseTestCase
 {
     protected function setUp(): void
     {
-        // The docker-compose container exports DB_CONNECTION/DB_DATABASE into
-        // $_SERVER, which takes precedence over phpunit.xml's <env> values when
-        // Laravel reads them. Force the test suite onto an isolated in-memory
-        // SQLite database so tests never touch (or wipe) the dev MySQL data.
+        // The docker-compose container exports DB_CONNECTION, QUEUE_CONNECTION,
+        // etc. into $_SERVER, which takes precedence over phpunit.xml's <env>
+        // values when Laravel reads them. Mirror the phpunit-forced values into
+        // $_SERVER so the suite stays hermetic: isolated in-memory SQLite, sync
+        // queue and in-memory cache/session — never the dev MySQL/Redis.
         if (getenv('APP_ENV') === 'testing') {
-            $_SERVER['DB_CONNECTION'] = getenv('DB_CONNECTION');
-            $_SERVER['DB_DATABASE'] = getenv('DB_DATABASE');
+            $keys = [
+                'APP_ENV',
+                'DB_CONNECTION',
+                'DB_DATABASE',
+                'QUEUE_CONNECTION',
+                'CACHE_STORE',
+                'SESSION_DRIVER',
+                'MAIL_MAILER',
+            ];
+
+            foreach ($keys as $key) {
+                $value = getenv($key);
+                $_SERVER[$key] = $value === false ? null : $value;
+            }
+
             $_SERVER['DB_HOST'] = null;
         }
 

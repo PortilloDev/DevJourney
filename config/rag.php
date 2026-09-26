@@ -49,7 +49,23 @@ return [
     */
     'retrieval' => [
         'top_k' => (int) env('RAG_TOP_K', 5),
-        'min_similarity' => (float) env('RAG_MIN_SIMILARITY', 0.35),
+        'min_similarity' => (float) env('RAG_MIN_SIMILARITY', 0.30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Per-post chat
+    |--------------------------------------------------------------------------
+    |
+    | Answers are scoped to a single post. `max_answer_tokens` caps the length of
+    | the answer (~2-3 tweets). The thresholds decide relevance locally (lexical
+    | overlap) before falling back to the embedding provider.
+    |
+    */
+    'post_chat' => [
+        'max_answer_tokens' => (int) env('RAG_POST_MAX_ANSWER_TOKENS', 200),
+        'related_threshold' => (float) env('RAG_POST_RELATED_THRESHOLD', 0.5),
+        'unrelated_threshold' => (float) env('RAG_POST_UNRELATED_THRESHOLD', 0.15),
     ],
 
     /*

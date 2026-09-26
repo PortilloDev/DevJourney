@@ -40,9 +40,9 @@ bash: ## Open a shell inside the app container
 composer: ## Run composer inside the app container, e.g. make composer ARGS="require foo/bar"
 	$(COMPOSE) exec $(APP) composer $(ARGS)
 
-install: ## Install PHP and JS dependencies
+install: ## Install PHP (container) and JS (host) dependencies
 	$(COMPOSE) exec $(APP) composer install
-	$(COMPOSE) exec $(APP) npm install
+	npm install
 
 artisan: ## Run an artisan command, e.g. make artisan ARGS="make:model Post"
 	$(COMPOSE) exec $(APP) php artisan $(ARGS)
@@ -68,14 +68,14 @@ pint: ## Run Laravel Pint (code style fixer)
 stan: ## Run PHPStan static analysis
 	$(COMPOSE) exec $(APP) ./vendor/bin/phpstan analyse
 
-npm: ## Run an npm command, e.g. make npm ARGS="run build"
-	$(COMPOSE) exec $(APP) npm $(ARGS)
+npm: ## Run an npm command on the HOST, e.g. make npm ARGS="run build"
+	npm $(ARGS)
 
-npm-dev: ## Run the Vite dev server
-	$(COMPOSE) exec $(APP) npm run dev
+npm-dev: ## Run the Vite dev server (on the HOST)
+	npm run dev
 
-npm-build: ## Build frontend assets for production
-	$(COMPOSE) exec $(APP) npm run build
+npm-build: ## Build frontend assets for production (on the HOST)
+	npm run build
 
 clean: ## Stop containers and remove volumes (destroys DB data)
 	$(COMPOSE) down -v

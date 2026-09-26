@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Models\AiUsage;
+use App\Models\Post;
 use App\Services\Rag\RagService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -33,6 +34,15 @@ class ChatController
             ], 429);
         }
 
+        $post = Post::query()->published()->where('slug', (string) $request->input('post', ''))->first();
+
+        if ($post === null) {
+            return response()->json([
+                'error' => 'unknown_post',
+                'message' => 'This article is not available.',
+            ], 404);
+        }
+
         $question = trim((string) $request->input('question', ''));
 
         if ($question === '' || mb_strlen($question) > 1000) {
@@ -43,18 +53,18 @@ class ChatController
         }
 
         if ($request->boolean('stream')) {
-            return $this->streamAnswer($request, $rag, $question, $ip);
+            return $this->streamAnswer($request, $rag, $post, $question, $ip);
         }
 
-        return $this->jsonAnswer($request, $rag, $question, $ip);
+        return $this->jsonAnswer($request, $rag, $post, $question, $ip);
     }
 
-    protected function jsonAnswer(Request $request, RagService $rag, string $question, string $ip): JsonResponse
+    protected function jsonAnswer(Request $request, RagService $rag, Post $post, string $question, string $ip): JsonResponse
     {
         $startedAt = microtime(true);
 
         try {
-            $result = $rag->ask($question, $ip, $request->user()?->getKey());
+            $result = $rag->askForPost($post, $question, $ip, $request->user()?->getKey());
         } catch (RuntimeException $e) {
             Log::warning('Chat error', ['message' => $e->getMessage()]);
 
@@ -70,13 +80,13 @@ class ChatController
         return response()->json($result);
     }
 
-    protected function streamAnswer(Request $request, RagService $rag, string $question, string $ip): StreamedResponse
+    protected function streamAnswer(Request $request, RagService $rag, Post $post, string $question, string $ip): StreamedResponse
     {
         $startedAt = microtime(true);
 
-        return response()->stream(function () use ($rag, $question, $ip, $request, $startedAt): void {
+        return response()->stream(function () use ($rag, $post, $question, $ip, $request, $startedAt): void {
             try {
-                $meta = $rag->askStream($question, function (string $delta): void {
+                $meta = $rag->askPostStream($post, $question, function (string $delta): void {
                     $this->sendSse(['delta' => $delta]);
                 }, $ip, $request->user()?->getKey());
 

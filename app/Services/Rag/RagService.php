@@ -23,6 +23,13 @@ use Illuminate\Support\Str;
  */
 class RagService
 {
+    /**
+     * Predefined answer for questions that are not related to the post. Defined
+     * in code (not in the database) as required by R4.
+     */
+    public const UNRELATED_MESSAGE = 'Sorry, I can only answer questions about this article. '
+        .'Try asking something that is covered in the post.';
+
     private string $collection;
 
     private int $topK;
@@ -32,6 +39,12 @@ class RagService
     private int $contextChunks;
 
     private int $maxInputTokens;
+
+    private int $postMaxAnswerTokens;
+
+    private float $relatedThreshold;
+
+    private float $unrelatedThreshold;
 
     public function __construct(
         private readonly VectorStore $store,
@@ -44,6 +57,9 @@ class RagService
         $this->minSimilarity = (float) config('rag.retrieval.min_similarity', 0.35);
         $this->contextChunks = (int) config('rag.limits.max_context_chunks', 5);
         $this->maxInputTokens = (int) config('rag.limits.max_input_tokens', 2000);
+        $this->postMaxAnswerTokens = (int) config('rag.post_chat.max_answer_tokens', 200);
+        $this->relatedThreshold = (float) config('rag.post_chat.related_threshold', 0.5);
+        $this->unrelatedThreshold = (float) config('rag.post_chat.unrelated_threshold', 0.15);
     }
 
     /**
@@ -121,6 +137,232 @@ class RagService
     }
 
     /**
+     * Answer a question scoped strictly to a single post (and its linked
+     * documents).
+     *
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    public function askForPost(Post $post, string $question, ?string $ip = null, ?int $userId = null): array
+    {
+        $question = trim($question);
+        $context = $this->resolvePostContext($post, $question);
+
+        if ($context['refused']) {
+            $this->recordUsage($ip, $userId, $question, refused: true);
+
+            return $this->refusedResult();
+        }
+
+        $result = $this->llm->complete(
+            [
+                ['role' => 'system', 'content' => $this->postChatPrompt()],
+                ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
+            ],
+            $this->postMaxAnswerTokens,
+        );
+
+        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $context['chunks'], sources: $context['sources']);
+
+        return [
+            'answer' => $result['content'],
+            'refused' => false,
+            'sources' => $context['sources'],
+            'tokens_in' => $result['tokens_in'],
+            'tokens_out' => $result['tokens_out'],
+            'context_chunks' => $context['chunks'],
+            'model' => $result['model'],
+        ];
+    }
+
+    /**
+     * Streamed variant of {@see self::askForPost()}.
+     *
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    public function askPostStream(Post $post, string $question, callable $onDelta, ?string $ip = null, ?int $userId = null): array
+    {
+        $question = trim($question);
+        $context = $this->resolvePostContext($post, $question);
+
+        if ($context['refused']) {
+            $onDelta(self::UNRELATED_MESSAGE);
+            $this->recordUsage($ip, $userId, $question, refused: true);
+
+            return $this->refusedStreamResult();
+        }
+
+        $result = $this->llm->stream(
+            [
+                ['role' => 'system', 'content' => $this->postChatPrompt()],
+                ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
+            ],
+            $onDelta,
+            $this->postMaxAnswerTokens,
+        );
+
+        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $context['chunks'], sources: $context['sources']);
+
+        return [
+            'refused' => false,
+            'sources' => $context['sources'],
+            'tokens_in' => $result['tokens_in'],
+            'tokens_out' => $result['tokens_out'],
+            'context_chunks' => $context['chunks'],
+            'model' => $result['model'],
+        ];
+    }
+
+    /**
+     * Two-stage relevance resolution scoped to a post (D8): a local lexical
+     * check short-circuits clearly unrelated questions without any external
+     * call; otherwise the embedding provider decides.
+     *
+     * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>}
+     */
+    private function resolvePostContext(Post $post, string $question): array
+    {
+        $questionTokens = $this->contentTokens($question);
+        $overlap = $this->lexicalOverlap($question, $this->postText($post));
+
+        // Sharing a distinctive term with the article title is a strong signal of
+        // relevance (e.g. the question says "hexagonal" / "laravel"). This also
+        // rescues cross-language questions that reuse the same domain term.
+        $sharesTitleTerm = $questionTokens !== []
+            && array_intersect($questionTokens, $this->contentTokens((string) $post->title)) !== [];
+
+        // Stage 1: a clearly unrelated question is refused with no external call.
+        if ($questionTokens !== [] && $overlap <= $this->unrelatedThreshold && ! $sharesTitleTerm) {
+            return $this->refusedContext();
+        }
+
+        $clearlyRelated = $sharesTitleTerm || $overlap >= $this->relatedThreshold;
+
+        // Stage 2: embedding-based retrieval, filtered to the post + its documents.
+        $vector = $this->embedding->embed($question);
+        $hits = $this->store->search($vector, $this->topK, $this->postFilter((int) $post->getKey()));
+
+        if ($hits === []) {
+            return $this->refusedContext();
+        }
+
+        // The similarity gate only decides the ambiguous case; a lexically
+        // conclusive question is trusted.
+        if (! $clearlyRelated && $this->bestScore($hits) < $this->minSimilarity) {
+            return $this->refusedContext();
+        }
+
+        $used = array_slice($hits, 0, $this->contextChunks);
+
+        return [
+            'refused' => false,
+            'context' => $this->buildContext($used),
+            'chunks' => count($used),
+            'sources' => $this->sources($used),
+        ];
+    }
+
+    /**
+     * @return array{should: list<array{key: string, value: mixed}>}
+     */
+    private function postFilter(int $postId): array
+    {
+        return [
+            'should' => [
+                ['key' => 'source_id', 'value' => 'post:'.$postId],
+                ['key' => 'post_id', 'value' => $postId],
+            ],
+        ];
+    }
+
+    /**
+     * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>}
+     */
+    private function refusedContext(): array
+    {
+        return ['refused' => true, 'context' => '', 'chunks' => 0, 'sources' => []];
+    }
+
+    private function postText(Post $post): string
+    {
+        return trim(($post->title ?? '').' '.($post->excerpt ?? '').' '.strip_tags((string) $post->body_html));
+    }
+
+    private function postChatPrompt(): string
+    {
+        return 'You are the assistant for ONE DevJourney journal article. Answer ONLY using the '
+            .'provided context about this article. Be concise: a single short paragraph, at most the '
+            .'length of two or three tweets (roughly 60 words). Return only the most important '
+            .'information needed to answer. If the context does not contain the answer, say you do not '
+            .'know. Never use information from other posts.';
+    }
+
+    /**
+     * Lexical overlap between the question and the post text: fraction of the
+     * question's content words that appear in the post.
+     */
+    private function lexicalOverlap(string $question, string $text): float
+    {
+        $questionTokens = $this->contentTokens($question);
+
+        if ($questionTokens === []) {
+            return 0.0;
+        }
+
+        $textTokens = $this->contentTokens($text);
+        $hits = array_intersect($questionTokens, $textTokens);
+
+        return count($hits) / count($questionTokens);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function contentTokens(string $text): array
+    {
+        $normalized = Str::lower(Str::ascii($text));
+        $parts = preg_split('/[^a-z0-9]+/', $normalized) ?: [];
+
+        $stopwords = ['the', 'and', 'for', 'with', 'that', 'this', 'from', 'what', 'when', 'where', 'which', 'how', 'why', 'who', 'are', 'was', 'were', 'you', 'your', 'about', 'into', 'como', 'para', 'sobre', 'este', 'esta', 'esto'];
+
+        return collect($parts)
+            ->filter(fn (string $token) => mb_strlen($token) >= 4 && ! in_array($token, $stopwords, true))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    private function refusedResult(): array
+    {
+        return [
+            'answer' => self::UNRELATED_MESSAGE,
+            'refused' => true,
+            'sources' => [],
+            'tokens_in' => 0,
+            'tokens_out' => 0,
+            'context_chunks' => 0,
+            'model' => config('rag.chat_model', 'unknown'),
+        ];
+    }
+
+    /**
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    private function refusedStreamResult(): array
+    {
+        return [
+            'refused' => true,
+            'sources' => [],
+            'tokens_in' => 0,
+            'tokens_out' => 0,
+            'context_chunks' => 0,
+            'model' => config('rag.chat_model', 'unknown'),
+        ];
+    }
+
+    /**
      * Embed the question, search the vector store and decide whether it is on
      * topic. Returns a context block plus metadata for the caller to build the
      * prompt.
@@ -164,7 +406,7 @@ class RagService
             'source_type' => 'document',
             'source_id' => 'doc:'.$document->id,
             'title' => $document->title,
-            'url' => $document->post ? route('posts.show', $document->post) : null,
+            'url' => $document->post ? route('posts.show', $document->post, absolute: false) : null,
             'post_id' => $document->post_id,
         ];
 
@@ -235,10 +477,12 @@ class RagService
 
     private function modelUrl(Model $model): ?string
     {
+        // Relative paths so the source resolves against the current origin
+        // (host + port) instead of the host captured at indexing time.
         return match ($model::class) {
-            Post::class => route('posts.show', $model),
-            Challenge::class => route('challenges.show', $model),
-            Project::class => route('projects.show', $model),
+            Post::class => route('posts.show', $model, absolute: false),
+            Challenge::class => route('challenges.show', $model, absolute: false),
+            Project::class => route('projects.show', $model, absolute: false),
             default => null,
         };
     }

@@ -32,18 +32,32 @@ class QdrantVectorStore implements VectorStore
 
     public function ensureCollection(?int $dimensions = null, ?string $distance = null): void
     {
-        if ($this->collectionExists()) {
-            return;
+        if (! $this->collectionExists()) {
+            $response = $this->client()->put("/collections/{$this->collection}", [
+                'vectors' => [
+                    'size' => $dimensions ?? config('rag.embeddings.dimensions', 1536),
+                    'distance' => $distance ?? $this->distance,
+                ],
+            ]);
+
+            $this->throwIfFailed($response, 'ensure collection');
         }
 
-        $response = $this->client()->put("/collections/{$this->collection}", [
-            'vectors' => [
-                'size' => $dimensions ?? config('rag.embeddings.dimensions', 1536),
-                'distance' => $distance ?? $this->distance,
-            ],
-        ]);
+        $this->ensurePayloadIndexes();
+    }
 
-        $this->throwIfFailed($response, 'ensure collection');
+    /**
+     * Fields used in filters need a payload index; creating an existing index is
+     * a no-op and any failure here must not break indexing.
+     */
+    protected function ensurePayloadIndexes(): void
+    {
+        foreach (['source_id' => 'keyword', 'post_id' => 'integer'] as $field => $schema) {
+            $this->client()->put("/collections/{$this->collection}/index?wait=true", [
+                'field_name' => $field,
+                'field_schema' => $schema,
+            ]);
+        }
     }
 
     /**
@@ -64,16 +78,23 @@ class QdrantVectorStore implements VectorStore
 
     /**
      * @param  list<float>  $vector
-     * @param  array<string, mixed>|null  $filter
+     * @param  array{must?: list<array{key: string, value: mixed}>, should?: list<array{key: string, value: mixed}>}|null  $filter
      * @return list<array{id: string, score: float, payload: array<string, mixed>}>
      */
     public function search(array $vector, int $limit = 5, ?array $filter = null): array
     {
-        $response = $this->client()->post("/collections/{$this->collection}/points/search", [
+        $body = [
             'vector' => $vector,
             'limit' => $limit,
             'with_payload' => true,
-        ]);
+        ];
+
+        $qdrantFilter = $this->toQdrantFilter($filter);
+        if ($qdrantFilter !== null) {
+            $body['filter'] = $qdrantFilter;
+        }
+
+        $response = $this->client()->post("/collections/{$this->collection}/points/search", $body);
 
         $this->throwIfFailed($response, 'search');
 
@@ -114,6 +135,29 @@ class QdrantVectorStore implements VectorStore
         $response = $this->client()->get("/collections/{$this->collection}");
 
         return $response->successful();
+    }
+
+    /**
+     * @param  array{must?: list<array{key: string, value: mixed}>, should?: list<array{key: string, value: mixed}>}|null  $filter
+     * @return array<string, list<array{key: string, match: array{value: mixed}}>>|null
+     */
+    protected function toQdrantFilter(?array $filter): ?array
+    {
+        if ($filter === null) {
+            return null;
+        }
+
+        $condition = fn (array $c) => ['key' => $c['key'], 'match' => ['value' => $c['value']]];
+
+        $qdrant = [];
+        if (! empty($filter['must'])) {
+            $qdrant['must'] = array_map($condition, $filter['must']);
+        }
+        if (! empty($filter['should'])) {
+            $qdrant['should'] = array_map($condition, $filter['should']);
+        }
+
+        return $qdrant === [] ? null : $qdrant;
     }
 
     protected function client(): PendingRequest

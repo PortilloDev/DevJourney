@@ -64,6 +64,14 @@ class AppServiceProvider extends ServiceProvider
             $view->with('seo', $this->app->make(SeoMetaService::class));
         });
 
+        // The app has a single canonical origin. Force it so absolute URLs
+        // (route(), url(), asset()) are generated with APP_URL even when the
+        // container receives a portless Host (Docker) — otherwise links and
+        // assets point to http://localhost with no port and fail.
+        if (filled(config('app.url'))) {
+            URL::forceRootUrl((string) config('app.url'));
+        }
+
         if ($this->app->environment('production')) {
             URL::forceScheme('https');
         }
@@ -86,19 +94,16 @@ class AppServiceProvider extends ServiceProvider
             $model::deleted($log('content.deleted'));
         }
 
-        // Content: index published posts/challenges/projects into the vector
-        // store and remove their vectors when they are deleted. Only wired when
-        // the RAG stack is actually configured (API keys present), so it never
-        // runs (or fails) in environments without credentials.
-        if (filled(config('rag.api_key')) && filled(config('rag.embeddings.api_key'))) {
-            foreach ([Post::class, Project::class, Challenge::class] as $model) {
-                $model::saved(function (Model $m) use ($model): void {
-                    if ($this->isPublished($m)) {
-                        dispatch(new IndexContentJob($model, $m->getKey()));
-                    }
-                });
-                $model::deleted(fn (Model $m) => app(RagService::class)->deleteContent($m));
-            }
+        // Content: index published posts/challenges/projects when they are
+        // published, and remove their vectors when deleted. The credential check
+        // lives inside IndexContentJob so the hooks can be registered always.
+        foreach ([Post::class, Project::class, Challenge::class] as $model) {
+            $model::saved(function (Model $m) use ($model): void {
+                if ($this->isPublished($m)) {
+                    dispatch(new IndexContentJob($model, $m->getKey()));
+                }
+            });
+            $model::deleted(fn (Model $m) => app(RagService::class)->deleteContent($m));
         }
 
         // Security audit trail for authentication.

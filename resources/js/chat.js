@@ -1,18 +1,18 @@
 /**
- * Public AI chat widget — streams answers from /api/chat over SSE.
+ * Per-article AI chat widget — streams answers from /api/chat over SSE.
  *
- * Full-page cache consideration: this component is interactive and never cached;
- * it lives inside the home Blade which is full-page cached, but the widget itself
- * is pure client-side JS, so no per-user data is rendered server-side.
+ * The widget is scoped to a single post (sends its slug) and keeps the
+ * conversation history in memory for the current page only. Each message can be
+ * copied to the clipboard. Pure client-side JS, safe inside cached HTML.
  */
-export function chatWidget() {
+export function chatWidget(slug) {
     return {
+        slug: slug,
         question: '',
-        answer: '',
-        sources: [],
+        messages: [],
         error: null,
         loading: false,
-        asked: false,
+        copiedIndex: null,
 
         async ask() {
             const q = this.question.trim();
@@ -20,11 +20,12 @@ export function chatWidget() {
                 return;
             }
 
-            this.answer = '';
-            this.sources = [];
             this.error = null;
             this.loading = true;
-            this.asked = true;
+            this.question = '';
+            this.messages.push({ role: 'user', text: q });
+            this.messages.push({ role: 'assistant', text: '', sources: [], refused: false });
+            const index = this.messages.length - 1;
 
             try {
                 const res = await fetch('/api/chat', {
@@ -34,13 +35,13 @@ export function chatWidget() {
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''),
                     },
-                    body: JSON.stringify({ question: q, stream: true }),
+                    body: JSON.stringify({ question: q, post: this.slug, stream: true }),
                 });
 
                 if (!res.ok) {
                     const body = await res.json().catch(() => ({}));
                     this.error = body.message || 'The assistant is unavailable. Try again later.';
-                    this.loading = false;
+                    this.messages.splice(index, 1);
 
                     return;
                 }
@@ -61,21 +62,23 @@ export function chatWidget() {
                     while ((idx = buffer.indexOf('\n')) !== -1) {
                         const line = buffer.slice(0, idx).replace(/\r$/, '');
                         buffer = buffer.slice(idx + 1);
-                        this.handleLine(line);
+                        this.handleLine(line, index);
                     }
 
                     this.$nextTick(() => this.scrollToBottom());
                 }
 
-                this.handleLine(buffer);
+                this.handleLine(buffer, index);
             } catch (e) {
                 this.error = 'Something went wrong. Please try again.';
+                this.messages.splice(index, 1);
             } finally {
                 this.loading = false;
+                this.$nextTick(() => this.scrollToBottom());
             }
         },
 
-        handleLine(line) {
+        handleLine(line, index) {
             if (!line.startsWith('data:')) {
                 return;
             }
@@ -93,7 +96,7 @@ export function chatWidget() {
             }
 
             if (event.delta) {
-                this.answer += event.delta;
+                this.messages[index].text += event.delta;
             }
 
             if (event.error) {
@@ -101,12 +104,27 @@ export function chatWidget() {
             }
 
             if (event.done) {
-                this.sources = event.sources || [];
+                this.messages[index].sources = event.sources || [];
+                this.messages[index].refused = !!event.refused;
             }
         },
 
-        hasSources() {
-            return Array.isArray(this.sources) && this.sources.filter((s) => s.url).length > 0;
+        async copy(message, index) {
+            try {
+                await navigator.clipboard.writeText(message.text);
+                this.copiedIndex = index;
+                setTimeout(() => {
+                    if (this.copiedIndex === index) {
+                        this.copiedIndex = null;
+                    }
+                }, 1500);
+            } catch (e) {
+                this.error = 'Could not copy to clipboard.';
+            }
+        },
+
+        hasSources(message) {
+            return Array.isArray(message.sources) && message.sources.some((s) => s.url);
         },
 
         scrollToBottom() {

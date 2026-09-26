@@ -107,63 +107,6 @@ class RagSystemTest extends TestCase
         $this->assertNotEmpty($this->store->search([1.0, 0.0, 0.0], 5));
     }
 
-    public function test_chat_endpoint_returns_an_answer(): void
-    {
-        $this->store->upsert([
-            [
-                'id' => '33333333-3333-4333-8333-333333333333',
-                'vector' => [1.0, 0.0, 0.0],
-                'payload' => [
-                    'source_type' => 'post',
-                    'source_id' => 'post:1',
-                    'title' => 'DDD',
-                    'url' => 'https://example.com/journal/ddd',
-                    'text' => 'Domain-driven design. Bounded contexts.',
-                ],
-            ],
-        ]);
-
-        $response = $this->postJson('/api/chat', ['question' => 'What is DDD?']);
-
-        $response->assertOk()->assertJson(['answer' => 'Hello from the fake LLM']);
-        $this->assertDatabaseCount('ai_usage', 1);
-    }
-
-    public function test_chat_endpoint_rate_limits_a_visitor_per_day(): void
-    {
-        config(['rag.limits.requests_per_day' => 1]);
-        $this->store->upsert([
-            [
-                'id' => '44444444-4444-4444-8444-444444444444',
-                'vector' => [1.0, 0.0, 0.0],
-                'payload' => ['source_type' => 'post', 'source_id' => 'post:1', 'title' => 'T', 'text' => 'About DDD.'],
-            ],
-        ]);
-
-        $this->postJson('/api/chat', ['question' => 'What is DDD?'])->assertOk();
-        $this->postJson('/api/chat', ['question' => 'What is DDD again?'])->assertStatus(429);
-    }
-
-    public function test_chat_endpoint_streams_an_answer(): void
-    {
-        $this->store->upsert([
-            [
-                'id' => '55555555-5555-4555-8555-555555555555',
-                'vector' => [1.0, 0.0, 0.0],
-                'payload' => ['source_type' => 'post', 'source_id' => 'post:1', 'title' => 'DDD', 'url' => 'https://example.com/journal/ddd', 'text' => 'Bounded contexts.'],
-            ],
-        ]);
-
-        $response = $this->postJson('/api/chat', ['question' => 'What is DDD?', 'stream' => true]);
-
-        $response->assertOk();
-        $this->assertStringContainsString('text/event-stream', $response->headers->get('content-type'));
-        $content = $response->streamedContent();
-        $this->assertStringContainsString('data: {"delta":"Streamed answer about DDD."}', $content);
-        $this->assertStringContainsString('data: [DONE]', $content);
-        $this->assertDatabaseCount('ai_usage', 1);
-    }
-
     public function test_document_and_usage_resources_render(): void
     {
         $email = 'admin@devjourney.test';

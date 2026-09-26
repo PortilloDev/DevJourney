@@ -56,6 +56,23 @@ docker compose exec app php artisan migrate --seed
 The `app` service is wired to MySQL/Redis/Meilisearch/Mailpit via environment
 variables in `docker-compose.yml`.
 
+> **Frontend assets are compiled, not served live by the PHP container.** When you
+> change anything under `resources/js`, rebuild (`npm run build`) or run the Vite
+> dev server on the host (`npm run dev`, writes `public/hot` for HMR). `npm` runs
+> on the **host** — the container has no Node. With `docker-compose.dev.yml` the
+> build output lives in a **named volume**
+> (`build:/var/www/html/public/build`) that shadows the host directory, so a host
+> build is only served after copying it into the volume:
+> `docker cp public/build/. <app-container>:/var/www/html/public/build/` plus
+> `php artisan optimize:clear`. A stale bundle shows up in the browser console as
+> `Uncaught ReferenceError: <component> is not defined` (e.g. broken buttons).
+>
+> **Asset host:** set `ASSET_URL` to the origin the browser actually uses. Docker
+> delivers the request to the container with a portless `Host`, so otherwise
+> `asset()` emits `http://localhost/build/...` and the browser fails with
+> `ERR_CONNECTION_REFUSED` (unstyled page). Dev: `ASSET_URL=http://localhost:8002`;
+> prod: your public https origin.
+
 ## Architecture notes
 
 - **Domain data** lives in `app/Models` with typed enums in `app/Enums`
