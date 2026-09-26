@@ -125,8 +125,14 @@ class QdrantVectorStore implements VectorStore
 
     protected function throwIfFailed(Response $response, string $operation): void
     {
-        if ($response->failed()) {
+        if ($response->failed() && ! $this->isMissingCollection($response)) {
             throw new RuntimeException("Qdrant {$operation} failed: {$response->body()}");
         }
+    }
+
+    protected function isMissingCollection(Response $response): bool
+    {
+        return $response->notFound()
+            || (bool) preg_match('/collection .* doesn\'t exist/i', $response->body());
     }
 }

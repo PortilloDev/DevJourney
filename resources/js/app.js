@@ -1,5 +1,6 @@
 import './bootstrap';
 import './tracker';
+import { chatWidget } from './chat';
 
 import Alpine from 'alpinejs';
 import collapse from '@alpinejs/collapse';
@@ -7,6 +8,7 @@ import hljs from 'highlight.js/lib/common';
 
 window.Alpine = Alpine;
 Alpine.plugin(collapse);
+Alpine.data('chatWidget', chatWidget);
 Alpine.start();
 
 // Syntax-highlight code blocks and add a copy button to each.

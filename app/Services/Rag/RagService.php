@@ -53,36 +53,96 @@ class RagService
     {
         $question = trim($question);
 
-        $queryVector = $this->embedding->embed($question);
-        $hits = $this->store->search($queryVector, $this->topK);
-
-        // Topic guardrail: refuse questions not relevant to the indexed content.
-        if ($hits === [] || ($this->bestScore($hits) < $this->minSimilarity)) {
+        $retrieved = $this->retrieve($question);
+        if ($retrieved['refused']) {
             $this->recordUsage($ip, $userId, $question, refused: true);
 
             return $this->emptyResult();
         }
 
-        $contextChunks = array_slice($hits, 0, $this->contextChunks);
-
         $result = $this->llm->complete(
             [
                 ['role' => 'system', 'content' => $this->systemPrompt()],
-                ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$this->buildContext($hits)],
+                ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$retrieved['context']],
             ],
             $this->maxInputTokens,
         );
 
-        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: count($contextChunks), sources: $this->sources($hits));
+        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $retrieved['chunks'], sources: $retrieved['sources']);
 
         return [
             'answer' => $result['content'],
             'refused' => false,
-            'sources' => $this->sources($hits),
+            'sources' => $retrieved['sources'],
             'tokens_in' => $result['tokens_in'],
             'tokens_out' => $result['tokens_out'],
-            'context_chunks' => count($contextChunks),
+            'context_chunks' => $retrieved['chunks'],
             'model' => $result['model'],
+        ];
+    }
+
+    /**
+     * Streamed variant of {@see self::ask()}. `$onDelta` receives each generated
+     * piece of text; the returned array mirrors the non-streamed shape minus the
+     * answer (which is streamed).
+     *
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    public function askStream(string $question, callable $onDelta, ?string $ip = null, ?int $userId = null): array
+    {
+        $question = trim($question);
+
+        $retrieved = $this->retrieve($question);
+        if ($retrieved['refused']) {
+            $this->recordUsage($ip, $userId, $question, refused: true);
+
+            return $this->emptyStreamResult();
+        }
+
+        $result = $this->llm->stream(
+            [
+                ['role' => 'system', 'content' => $this->systemPrompt()],
+                ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$retrieved['context']],
+            ],
+            $onDelta,
+            $this->maxInputTokens,
+        );
+
+        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $retrieved['chunks'], sources: $retrieved['sources']);
+
+        return [
+            'refused' => false,
+            'sources' => $retrieved['sources'],
+            'tokens_in' => $result['tokens_in'],
+            'tokens_out' => $result['tokens_out'],
+            'context_chunks' => $retrieved['chunks'],
+            'model' => $result['model'],
+        ];
+    }
+
+    /**
+     * Embed the question, search the vector store and decide whether it is on
+     * topic. Returns a context block plus metadata for the caller to build the
+     * prompt.
+     *
+     * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>}
+     */
+    private function retrieve(string $question): array
+    {
+        $queryVector = $this->embedding->embed($question);
+        $hits = $this->store->search($queryVector, $this->topK);
+
+        if ($hits === [] || ($this->bestScore($hits) < $this->minSimilarity)) {
+            return ['refused' => true, 'context' => '', 'chunks' => 0, 'sources' => []];
+        }
+
+        $used = array_slice($hits, 0, $this->contextChunks);
+
+        return [
+            'refused' => false,
+            'context' => $this->buildContext($used),
+            'chunks' => count($used),
+            'sources' => $this->sources($used),
         ];
     }
 
@@ -303,6 +363,21 @@ class RagService
     {
         return [
             'answer' => null,
+            'refused' => true,
+            'sources' => [],
+            'tokens_in' => 0,
+            'tokens_out' => 0,
+            'context_chunks' => 0,
+            'model' => config('rag.chat_model', 'unknown'),
+        ];
+    }
+
+    /**
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    private function emptyStreamResult(): array
+    {
+        return [
             'refused' => true,
             'sources' => [],
             'tokens_in' => 0,

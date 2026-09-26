@@ -107,6 +107,9 @@
         </section>
     @endif
 
+    {{-- AI assistant --}}
+    <x-chat-widget :enabled="filled(config('rag.api_key'))" />
+
     {{-- Milestones --}}
     @if($milestones->isNotEmpty())
         <section>

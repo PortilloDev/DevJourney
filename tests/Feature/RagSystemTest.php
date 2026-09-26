@@ -144,6 +144,26 @@ class RagSystemTest extends TestCase
         $this->postJson('/api/chat', ['question' => 'What is DDD again?'])->assertStatus(429);
     }
 
+    public function test_chat_endpoint_streams_an_answer(): void
+    {
+        $this->store->upsert([
+            [
+                'id' => '55555555-5555-4555-8555-555555555555',
+                'vector' => [1.0, 0.0, 0.0],
+                'payload' => ['source_type' => 'post', 'source_id' => 'post:1', 'title' => 'DDD', 'url' => 'https://example.com/journal/ddd', 'text' => 'Bounded contexts.'],
+            ],
+        ]);
+
+        $response = $this->postJson('/api/chat', ['question' => 'What is DDD?', 'stream' => true]);
+
+        $response->assertOk();
+        $this->assertStringContainsString('text/event-stream', $response->headers->get('content-type'));
+        $content = $response->streamedContent();
+        $this->assertStringContainsString('data: {"delta":"Streamed answer about DDD."}', $content);
+        $this->assertStringContainsString('data: [DONE]', $content);
+        $this->assertDatabaseCount('ai_usage', 1);
+    }
+
     public function test_document_and_usage_resources_render(): void
     {
         $email = 'admin@devjourney.test';
@@ -201,6 +221,19 @@ final class FakeLlmClient implements LlmClient
     {
         return [
             'content' => 'Hello from the fake LLM',
+            'tokens_in' => 10,
+            'tokens_out' => 5,
+            'model' => 'fake-llm',
+        ];
+    }
+
+    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null): array
+    {
+        $content = 'Streamed answer about DDD.';
+        ($onDelta)($content);
+
+        return [
+            'content' => $content,
             'tokens_in' => 10,
             'tokens_out' => 5,
             'model' => 'fake-llm',

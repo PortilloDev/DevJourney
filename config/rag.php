@@ -35,7 +35,7 @@ return [
     |--------------------------------------------------------------------------
     */
     'qdrant' => [
-        'enabled' => (bool) env('QDRANT_ENABLED', true),
+        'enabled' => filter_var(env('QDRANT_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         'host' => env('QDRANT_HOST', 'http://qdrant:6333'),
         'api_key' => env('QDRANT_API_KEY'),
         'collection' => env('QDRANT_COLLECTION', 'content'),

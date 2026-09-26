@@ -30,5 +30,8 @@
         <env name="SESSION_DRIVER" value="array" force="true"/>
         <env name="TELESCOPE_ENABLED" value="false" force="true"/>
         <env name="FILAMENT_ADMIN_EMAIL" value="admin@email.test" force="true"/>
+        <env name="QDRANT_ENABLED" value="false" force="true"/>
+        <env name="LLM_API_KEY" value="" force="true"/>
+        <env name="LLM_BASE_URL" value="https://example.invalid" force="true"/>
     </php>
 </phpunit>

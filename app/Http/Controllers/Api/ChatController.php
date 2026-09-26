@@ -11,10 +11,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ChatController
 {
-    public function __invoke(Request $request, RagService $rag): JsonResponse
+    public function __invoke(Request $request, RagService $rag): JsonResponse|StreamedResponse
     {
         $ip = $request->ip() ?? 'unknown';
 
@@ -41,6 +42,15 @@ class ChatController
             ], 422);
         }
 
+        if ($request->boolean('stream')) {
+            return $this->streamAnswer($request, $rag, $question, $ip);
+        }
+
+        return $this->jsonAnswer($request, $rag, $question, $ip);
+    }
+
+    protected function jsonAnswer(Request $request, RagService $rag, string $question, string $ip): JsonResponse
+    {
         $startedAt = microtime(true);
 
         try {
@@ -48,22 +58,65 @@ class ChatController
         } catch (RuntimeException $e) {
             Log::warning('Chat error', ['message' => $e->getMessage()]);
 
-            return response()->json([
-                'error' => 'service_error',
-                'message' => 'The assistant is temporarily unavailable.',
-            ], 503);
+            return response()->json(['error' => 'service_error', 'message' => 'The assistant is temporarily unavailable.'], 503);
         } catch (\Throwable $e) {
             Log::error('Chat unexpected error', ['exception' => $e]);
 
-            return response()->json([
-                'error' => 'service_error',
-                'message' => 'Something went wrong. Please try again.',
-            ], 503);
+            return response()->json(['error' => 'service_error', 'message' => 'Something went wrong. Please try again.'], 503);
         }
 
         $this->recordLatency($ip, $startedAt);
 
         return response()->json($result);
+    }
+
+    protected function streamAnswer(Request $request, RagService $rag, string $question, string $ip): StreamedResponse
+    {
+        $startedAt = microtime(true);
+
+        return response()->stream(function () use ($rag, $question, $ip, $request, $startedAt): void {
+            try {
+                $meta = $rag->askStream($question, function (string $delta): void {
+                    $this->sendSse(['delta' => $delta]);
+                }, $ip, $request->user()?->getKey());
+
+                $this->recordLatency($ip, $startedAt);
+
+                $this->sendSse([
+                    'done' => true,
+                    'refused' => $meta['refused'],
+                    'sources' => $meta['sources'],
+                    'tokens_in' => $meta['tokens_in'],
+                    'tokens_out' => $meta['tokens_out'],
+                    'context_chunks' => $meta['context_chunks'],
+                    'model' => $meta['model'],
+                ]);
+            } catch (RuntimeException $e) {
+                Log::warning('Chat stream error', ['message' => $e->getMessage()]);
+                $this->sendSse(['error' => 'service_error', 'message' => 'The assistant is temporarily unavailable.']);
+            } catch (\Throwable $e) {
+                Log::error('Chat stream unexpected error', ['exception' => $e]);
+                $this->sendSse(['error' => 'service_error', 'message' => 'Something went wrong. Please try again.']);
+            }
+
+            echo "data: [DONE]\n\n";
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'X-Accel-Buffering' => 'no',
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function sendSse(array $data): void
+    {
+        echo 'data: '.json_encode($data, JSON_UNESCAPED_UNICODE)."\n\n";
+        if (ob_get_level() > 0) {
+            ob_flush();
+        }
+        flush();
     }
 
     protected function requestLimitReached(string $ip): bool
