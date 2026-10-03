@@ -1,6 +1,6 @@
 ---
 feature: chat-por-post-mejoras
-estado: implementada
+estado: archivada
 creada: 2026-09-26
 aprobada: 2026-09-26
 ---

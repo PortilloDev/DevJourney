@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\CachePublicPages;
+use App\Http\Middleware\SetRequestHost;
 use App\Http\Middleware\SetSecurityHeaders;
 use App\Http\Middleware\TrackVisit;
 use Illuminate\Foundation\Application;
@@ -28,6 +29,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) use ($trustedProxies) {
+        // Force the canonical Host first, before routing and signed-URL checks.
+        $middleware->prepend(SetRequestHost::class);
+
         // TrackVisit runs first so page views are recorded even for cached HTML.
         $middleware->web(append: [
             TrackVisit::class,

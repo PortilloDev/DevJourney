@@ -140,6 +140,24 @@ resources/views/
 - Crea una base de datos MySQL y configura la variable `DB_DATABASE` en `.env`.
 - Crea un usuario y contraseña para la base de datos y configura la variable `DB_USERNAME` y `DB_PASSWORD` en `.env`.
 
+### ⚙️ Requisitos de producción
+
+- **`APP_URL` debe ser el origen público** (p. ej. `https://example.com`), e
+  idealmente `ASSET_URL` igual. El middleware `SetRequestHost` y
+  `URL::forceRootUrl` derivan de ahí los hosts y la validación de URLs firmadas;
+  un valor incorrecto rompe enlaces y subidas.
+- **Claves del RAG** en `.env` para el chat/indexado: `LLM_API_KEY`,
+  `EMBEDDING_API_KEY`, `QDRANT_API_KEY` (la misma que usa el contenedor `qdrant`).
+- La imagen **ya incluye `poppler-utils`** (`pdftotext`) para indexar PDFs.
+- Tras desplegar, ejecuta:
+  ```bash
+  php artisan migrate --force      # nuevas tablas
+  php artisan optimize:clear       # caché de páginas/assets
+  # reindexar contenido y documentos para el RAG
+  ```
+- **No** hagas `php artisan config:cache` en la build: el `.env` se monta en
+  runtime y una caché de build lo ignoraría.
+
 ### 🚀 Despliegue
 
 ```bash

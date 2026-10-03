@@ -57,9 +57,21 @@ CI (`.github/workflows/ci.yml`) is the definition of done: `pint --test`,
   (`FILAMENT_ADMIN_EMAIL`). Seeded login: `admin@devjourney.test` / `password`.
 - The RAG stack (Qdrant + OpenAI/DeepSeek) is gated by API keys in `.env`
   (`config/rag.php`); without keys the chat returns 503 and indexing is off.
+  PDF indexing needs `poppler-utils` (`pdftotext`), already in the `Dockerfile`.
 - Style: `declare(strict_types=1)` everywhere, PSR-12 via Pint, PHPStan level 6.
   Follow the existing patterns (Services, Enums, Filament Resources) — do not
   introduce new architectural layers without reason.
+
+## Production build & deploy
+
+- **`APP_URL` (and `ASSET_URL`) must be the public origin** (e.g.
+  `https://example.com`). `SetRequestHost` + `URL::forceRootUrl` derive hosts and
+  signed-URL validation from it; a wrong value breaks links and uploads.
+- Run `php artisan migrate --force` on deploy (new tables ship with the code).
+- Run `php artisan optimize:clear` after deploying (stale page cache / assets).
+- Reindex RAG content after deploy so vector payloads match the new origin.
+- Do **not** `config:cache` at image build time: the runtime `.env` is mounted and
+  a build-time cache would ignore it.
 
 ## Layout
 
