@@ -8,6 +8,9 @@
 export function chatWidget(slug) {
     return {
         slug: slug,
+        conversationId: (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : 'c-'.concat(Date.now(), '-', Math.random().toString(16).slice(2)),
         question: '',
         messages: [],
         error: null,
@@ -35,7 +38,7 @@ export function chatWidget(slug) {
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''),
                     },
-                    body: JSON.stringify({ question: q, post: this.slug, stream: true }),
+                    body: JSON.stringify({ question: q, post: this.slug, conversation: this.conversationId, stream: true }),
                 });
 
                 if (!res.ok) {

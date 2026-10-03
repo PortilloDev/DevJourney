@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Rag;
 
+use App\Models\AiConversation;
 use App\Models\AiUsage;
 use App\Models\Challenge;
 use App\Models\Document;
@@ -142,26 +143,37 @@ class RagService
      *
      * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
      */
-    public function askForPost(Post $post, string $question, ?string $ip = null, ?int $userId = null): array
+    public function askForPost(Post $post, string $question, ?string $ip = null, ?int $userId = null, ?int $conversationId = null): array
     {
         $question = trim($question);
         $context = $this->resolvePostContext($post, $question);
 
         if ($context['refused']) {
-            $this->recordUsage($ip, $userId, $question, refused: true);
+            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage']));
 
             return $this->refusedResult();
         }
 
-        $result = $this->llm->complete(
-            [
-                ['role' => 'system', 'content' => $this->postChatPrompt()],
-                ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
-            ],
-            $this->postMaxAnswerTokens,
-        );
+        $messages = [
+            ['role' => 'system', 'content' => $this->postChatPrompt()],
+            ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
+        ];
 
-        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $context['chunks'], sources: $context['sources']);
+        $result = $this->llm->complete($messages, $this->postMaxAnswerTokens);
+
+        $this->recordUsage(
+            $ip,
+            $userId,
+            $question,
+            tokensIn: $result['tokens_in'],
+            tokensOut: $result['tokens_out'],
+            chunks: $context['chunks'],
+            sources: $context['sources'],
+            extra: $this->observability($post, $conversationId, null, [
+                'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                'answer' => $result['content'],
+            ]),
+        );
 
         return [
             'answer' => $result['content'],
@@ -179,28 +191,38 @@ class RagService
      *
      * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
      */
-    public function askPostStream(Post $post, string $question, callable $onDelta, ?string $ip = null, ?int $userId = null): array
+    public function askPostStream(Post $post, string $question, callable $onDelta, ?string $ip = null, ?int $userId = null, ?int $conversationId = null): array
     {
         $question = trim($question);
         $context = $this->resolvePostContext($post, $question);
 
         if ($context['refused']) {
             $onDelta(self::UNRELATED_MESSAGE);
-            $this->recordUsage($ip, $userId, $question, refused: true);
+            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage']));
 
             return $this->refusedStreamResult();
         }
 
-        $result = $this->llm->stream(
-            [
-                ['role' => 'system', 'content' => $this->postChatPrompt()],
-                ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
-            ],
-            $onDelta,
-            $this->postMaxAnswerTokens,
-        );
+        $messages = [
+            ['role' => 'system', 'content' => $this->postChatPrompt()],
+            ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
+        ];
 
-        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $context['chunks'], sources: $context['sources']);
+        $result = $this->llm->stream($messages, $onDelta, $this->postMaxAnswerTokens);
+
+        $this->recordUsage(
+            $ip,
+            $userId,
+            $question,
+            tokensIn: $result['tokens_in'],
+            tokensOut: $result['tokens_out'],
+            chunks: $context['chunks'],
+            sources: $context['sources'],
+            extra: $this->observability($post, $conversationId, null, [
+                'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                'answer' => $result['content'],
+            ]),
+        );
 
         return [
             'refused' => false,
@@ -213,11 +235,29 @@ class RagService
     }
 
     /**
+     * Observability metadata stored with every turn plus the conversation link.
+     *
+     * @param  array<string, mixed>  $extra
+     * @return array<string, mixed>
+     */
+    private function observability(Post $post, ?int $conversationId, ?string $refusedStage, array $extra = []): array
+    {
+        return array_merge([
+            'conversation_id' => $conversationId,
+            'post_id' => $post->getKey(),
+            'refused_stage' => $refusedStage,
+            'provider' => (string) config('rag.provider', 'unknown'),
+            'embedding_model' => (string) config('rag.embeddings.model', 'unknown'),
+            'top_k' => $this->topK,
+        ], $extra);
+    }
+
+    /**
      * Two-stage relevance resolution scoped to a post (D8): a local lexical
      * check short-circuits clearly unrelated questions without any external
      * call; otherwise the embedding provider decides.
      *
-     * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>}
+     * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>, stage: string|null}
      */
     private function resolvePostContext(Post $post, string $question): array
     {
@@ -232,7 +272,7 @@ class RagService
 
         // Stage 1: a clearly unrelated question is refused with no external call.
         if ($questionTokens !== [] && $overlap <= $this->unrelatedThreshold && ! $sharesTitleTerm) {
-            return $this->refusedContext();
+            return $this->refusedContext('local');
         }
 
         $clearlyRelated = $sharesTitleTerm || $overlap >= $this->relatedThreshold;
@@ -242,13 +282,13 @@ class RagService
         $hits = $this->store->search($vector, $this->topK, $this->postFilter((int) $post->getKey()));
 
         if ($hits === []) {
-            return $this->refusedContext();
+            return $this->refusedContext('embedding');
         }
 
         // The similarity gate only decides the ambiguous case; a lexically
         // conclusive question is trusted.
         if (! $clearlyRelated && $this->bestScore($hits) < $this->minSimilarity) {
-            return $this->refusedContext();
+            return $this->refusedContext('embedding');
         }
 
         $used = array_slice($hits, 0, $this->contextChunks);
@@ -258,6 +298,7 @@ class RagService
             'context' => $this->buildContext($used),
             'chunks' => count($used),
             'sources' => $this->sources($used),
+            'stage' => null,
         ];
     }
 
@@ -275,11 +316,11 @@ class RagService
     }
 
     /**
-     * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>}
+     * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>, stage: string}
      */
-    private function refusedContext(): array
+    private function refusedContext(string $stage): array
     {
-        return ['refused' => true, 'context' => '', 'chunks' => 0, 'sources' => []];
+        return ['refused' => true, 'context' => '', 'chunks' => 0, 'sources' => [], 'stage' => $stage];
     }
 
     private function postText(Post $post): string
@@ -580,14 +621,15 @@ class RagService
 
     /**
      * @param  list<array<string, mixed>>  $sources
+     * @param  array<string, mixed>  $extra
      */
-    private function recordUsage(?string $ip, ?int $userId, string $question, bool $refused = false, int $tokensIn = 0, int $tokensOut = 0, int $chunks = 0, array $sources = []): void
+    private function recordUsage(?string $ip, ?int $userId, string $question, bool $refused = false, int $tokensIn = 0, int $tokensOut = 0, int $chunks = 0, array $sources = [], array $extra = []): void
     {
         if ($ip === null) {
             return;
         }
 
-        AiUsage::create([
+        AiUsage::create(array_merge([
             'ip_address' => $ip,
             'user_id' => $userId,
             'question' => $question,
@@ -596,8 +638,29 @@ class RagService
             'tokens_out' => $tokensOut,
             'context_chunks' => $chunks,
             'latency_ms' => 0,
+            'refused' => $refused,
             'sources' => $sources !== [] ? json_encode($sources) : null,
-        ]);
+        ], $extra));
+
+        $this->touchConversation($extra['conversation_id'] ?? null, $tokensIn + $tokensOut);
+    }
+
+    private function touchConversation(mixed $conversationId, int $tokens): void
+    {
+        if (! is_numeric($conversationId)) {
+            return;
+        }
+
+        $conversation = AiConversation::find((int) $conversationId);
+
+        if ($conversation === null) {
+            return;
+        }
+
+        $conversation->turns_count = $conversation->turns_count + 1;
+        $conversation->tokens_total = $conversation->tokens_total + $tokens;
+        $conversation->last_activity_at = now();
+        $conversation->save();
     }
 
     /**

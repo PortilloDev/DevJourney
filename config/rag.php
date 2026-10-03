@@ -89,4 +89,15 @@ return [
         'chunk_size' => (int) env('RAG_CHUNK_SIZE', 900),
         'chunk_overlap' => (int) env('RAG_CHUNK_OVERLAP', 120),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Conversation log retention
+    |--------------------------------------------------------------------------
+    |
+    | Chat conversations (and their turns) older than this many days are pruned
+    | by the `ai:prune-conversations` scheduled command.
+    |
+    */
+    'retention_days' => (int) env('RAG_RETENTION_DAYS', 30),
 ];

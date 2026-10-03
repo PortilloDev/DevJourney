@@ -1,6 +1,6 @@
 ---
 feature: chat-logs-conversacion
-estado: aprobada
+estado: archivada
 creada: 2026-09-26
 aprobada: 2026-09-26
 ---

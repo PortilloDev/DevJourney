@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Models\AiConversation;
+use App\Models\AiUsage;
 use App\Models\Post;
+use App\Models\User;
 use App\Services\Embedding\EmbeddingService;
 use App\Services\Llm\LlmClient;
 use App\Services\Rag\RagService;
@@ -221,6 +224,98 @@ class PostChatTest extends TestCase
         $content = $response->streamedContent();
         $this->assertStringContainsString('"delta":"Concise answer."', $content);
         $this->assertStringContainsString('data: [DONE]', $content);
+    }
+
+    // R1 + R2: every turn is logged with full detail and grouped by conversation
+    public function test_conversation_turns_are_logged_and_grouped(): void
+    {
+        $post = $this->postA();
+        app(RagService::class)->indexContent($post);
+
+        $payload = [
+            'question' => 'How does hexagonal architecture isolate the domain?',
+            'post' => 'hexagonal',
+            'conversation' => 'sess-123',
+        ];
+
+        $this->postJson('/api/chat', $payload)->assertOk();
+        $this->postJson('/api/chat', $payload)->assertOk();
+
+        $conversation = AiConversation::query()->where('session_id', 'sess-123')->first();
+        $this->assertNotNull($conversation);
+        $this->assertSame(2, $conversation->turns_count);
+        $this->assertSame(2, $conversation->turns()->count());
+
+        $turn = $conversation->turns()->first();
+        $this->assertSame($post->getKey(), $turn->post_id);
+        $this->assertFalse($turn->refused);
+        $this->assertNotNull($turn->prompt);
+        $this->assertNotNull($turn->answer);
+        $this->assertNotEmpty($turn->retrievedSources());
+        $this->assertNotNull($turn->provider);
+        $this->assertNotNull($turn->embedding_model);
+    }
+
+    // R5
+    public function test_prune_command_deletes_old_conversations(): void
+    {
+        AiConversation::query()->create(['session_id' => 'old', 'ip_address' => '1.1.1.1', 'started_at' => now()->subDays(40), 'last_activity_at' => now()->subDays(40)]);
+        AiConversation::query()->create(['session_id' => 'new', 'ip_address' => '1.1.1.1', 'started_at' => now(), 'last_activity_at' => now()]);
+
+        $this->artisan('ai:prune-conversations')->assertExitCode(0);
+
+        $this->assertDatabaseMissing('ai_conversations', ['session_id' => 'old']);
+        $this->assertDatabaseHas('ai_conversations', ['session_id' => 'new']);
+    }
+
+    // R4
+    public function test_manual_deletion_by_range_and_all(): void
+    {
+        AiConversation::query()->create(['session_id' => 'a', 'ip_address' => '1.1.1.1', 'last_activity_at' => now()->subDays(10)]);
+        AiConversation::query()->create(['session_id' => 'b', 'ip_address' => '1.1.1.1', 'last_activity_at' => now()->subDays(2)]);
+        $recent = AiConversation::query()->create(['session_id' => 'c', 'ip_address' => '1.1.1.1', 'last_activity_at' => now()]);
+        AiUsage::query()->create(['conversation_id' => $recent->id, 'ip_address' => '1.1.1.1', 'question' => 'q', 'model' => 'm']);
+
+        $deleted = AiConversation::deleteBetween(now()->subDays(5)->toDateString(), now()->toDateString());
+
+        $this->assertSame(2, $deleted);
+        $this->assertDatabaseHas('ai_conversations', ['session_id' => 'a']);
+        $this->assertDatabaseMissing('ai_conversations', ['session_id' => 'b']);
+        $this->assertDatabaseMissing('ai_conversations', ['session_id' => 'c']);
+
+        AiConversation::deleteAllLogs();
+
+        $this->assertDatabaseCount('ai_conversations', 0);
+        $this->assertDatabaseCount('ai_usage', 0);
+    }
+
+    // R3
+    public function test_conversation_viewer_renders(): void
+    {
+        $email = 'admin@devjourney.test';
+        config(['app.filament_admin_email' => $email]);
+        $admin = User::factory()->create(['email' => $email]);
+
+        $conversation = AiConversation::query()->create([
+            'session_id' => 'viewer-sess',
+            'ip_address' => '1.1.1.1',
+            'started_at' => now(),
+            'last_activity_at' => now(),
+        ]);
+
+        AiUsage::query()->create([
+            'conversation_id' => $conversation->id,
+            'ip_address' => '1.1.1.1',
+            'question' => 'What is hexagonal?',
+            'prompt' => '[{"role":"system","content":"..."}]',
+            'answer' => 'It isolates the domain.',
+            'model' => 'm',
+            'refused' => false,
+            'sources' => json_encode([['title' => 'Hex', 'url' => '/journal/hex', 'heading' => 'Intro', 'score' => 0.9]]),
+        ]);
+
+        $this->actingAs($admin)->get('/admin/ai-conversations')->assertOk();
+        $this->actingAs($admin)->get('/admin/ai-conversations/'.$conversation->id)->assertOk();
     }
 
     /**

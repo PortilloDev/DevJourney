@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Models\AiConversation;
 use App\Models\AiUsage;
 use App\Models\Post;
 use App\Services\Rag\RagService;
@@ -12,6 +13,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -60,19 +62,34 @@ class ChatController
             ], 422);
         }
 
-        if ($request->boolean('stream')) {
-            return $this->streamAnswer($request, $rag, $post, $question, $ip);
+        $sessionId = trim((string) $request->input('conversation', ''));
+        if ($sessionId === '' || mb_strlen($sessionId) > 100) {
+            $sessionId = (string) Str::uuid();
         }
 
-        return $this->jsonAnswer($request, $rag, $post, $question, $ip);
+        $conversation = AiConversation::firstOrCreate(
+            ['session_id' => $sessionId],
+            [
+                'ip_address' => $ip,
+                'post_id' => $post->getKey(),
+                'started_at' => now(),
+                'last_activity_at' => now(),
+            ],
+        );
+
+        if ($request->boolean('stream')) {
+            return $this->streamAnswer($request, $rag, $post, $conversation->id, $question, $ip);
+        }
+
+        return $this->jsonAnswer($request, $rag, $post, $conversation->id, $question, $ip);
     }
 
-    protected function jsonAnswer(Request $request, RagService $rag, Post $post, string $question, string $ip): JsonResponse
+    protected function jsonAnswer(Request $request, RagService $rag, Post $post, int $conversationId, string $question, string $ip): JsonResponse
     {
         $startedAt = microtime(true);
 
         try {
-            $result = $rag->askForPost($post, $question, $ip, $request->user()?->getKey());
+            $result = $rag->askForPost($post, $question, $ip, $request->user()?->getKey(), $conversationId);
         } catch (RuntimeException $e) {
             Log::warning('Chat error', ['message' => $e->getMessage()]);
 
@@ -88,15 +105,15 @@ class ChatController
         return response()->json($result);
     }
 
-    protected function streamAnswer(Request $request, RagService $rag, Post $post, string $question, string $ip): StreamedResponse
+    protected function streamAnswer(Request $request, RagService $rag, Post $post, int $conversationId, string $question, string $ip): StreamedResponse
     {
         $startedAt = microtime(true);
 
-        return response()->stream(function () use ($rag, $post, $question, $ip, $request, $startedAt): void {
+        return response()->stream(function () use ($rag, $post, $conversationId, $question, $ip, $request, $startedAt): void {
             try {
                 $meta = $rag->askPostStream($post, $question, function (string $delta): void {
                     $this->sendSse(['delta' => $delta]);
-                }, $ip, $request->user()?->getKey());
+                }, $ip, $request->user()?->getKey(), $conversationId);
 
                 $this->recordLatency($ip, $startedAt);
 
