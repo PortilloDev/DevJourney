@@ -1,6 +1,6 @@
 ---
 feature: chat-configuracion-admin
-estado: aprobada
+estado: archivada
 creada: 2026-09-26
 aprobada: 2026-09-26
 ---

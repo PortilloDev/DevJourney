@@ -54,7 +54,7 @@
             </div>
 
             {{-- Per-article AI chat --}}
-            <x-chat-widget :enabled="filled(config('rag.api_key'))" :post="$post" />
+            <x-chat-widget :enabled="filled(config('rag.api_key')) && $settings->chatVisible()" :post="$post" />
 
             @if($related->isNotEmpty())
                 <section class="mt-16">

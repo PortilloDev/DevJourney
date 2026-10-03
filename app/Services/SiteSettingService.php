@@ -32,6 +32,30 @@ class SiteSettingService
         return $this->all()[$key] ?? $default;
     }
 
+    /**
+     * Whether the public chat API is blocked (403 to callers, widget hidden).
+     */
+    public function chatApiBlocked(): bool
+    {
+        return (bool) $this->get('chat_api_blocked', false);
+    }
+
+    /**
+     * Whether the chat widget is hidden on the public site (API still enabled).
+     */
+    public function chatHidden(): bool
+    {
+        return (bool) $this->get('chat_hidden', false);
+    }
+
+    /**
+     * Whether any visitor-facing chat UI should be shown at all.
+     */
+    public function chatVisible(): bool
+    {
+        return ! $this->chatApiBlocked() && ! $this->chatHidden();
+    }
+
     public function set(string $key, mixed $value, string $group = 'general', string $type = 'text'): void
     {
         SiteSetting::updateOrCreate(

@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api;
 use App\Models\AiUsage;
 use App\Models\Post;
 use App\Services\Rag\RagService;
+use App\Services\SiteSettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -18,6 +19,13 @@ class ChatController
 {
     public function __invoke(Request $request, RagService $rag): JsonResponse|StreamedResponse
     {
+        if (app(SiteSettingService::class)->chatApiBlocked()) {
+            return response()->json([
+                'error' => 'chat_blocked',
+                'message' => 'The chat is currently disabled.',
+            ], 403);
+        }
+
         $ip = $request->ip() ?? 'unknown';
 
         if ($this->requestLimitReached($ip)) {

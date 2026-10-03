@@ -60,6 +60,10 @@ class DatabaseSeeder extends Seeder
         $settings->set('now_updated_at', now()->toDateString(), 'now');
         $settings->set('social_github', 'https://github.com/PortilloDev', 'social');
         $settings->set('social_linkedin', 'https://www.linkedin.com/in/ivan-portillo-perez/', 'social');
+
+        // Chat availability toggles (editable in the admin).
+        $settings->set('chat_api_blocked', false, 'chat', 'boolean');
+        $settings->set('chat_hidden', false, 'chat', 'boolean');
     }
 
     /**
