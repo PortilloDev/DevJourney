@@ -32,18 +32,43 @@ class QdrantVectorStore implements VectorStore
 
     public function ensureCollection(?int $dimensions = null, ?string $distance = null): void
     {
+        $expected = $dimensions ?? (int) config('rag.embeddings.dimensions', 1536);
+
         if (! $this->collectionExists()) {
             $response = $this->client()->put("/collections/{$this->collection}", [
                 'vectors' => [
-                    'size' => $dimensions ?? config('rag.embeddings.dimensions', 1536),
+                    'size' => $expected,
                     'distance' => $distance ?? $this->distance,
                 ],
             ]);
 
             $this->throwIfFailed($response, 'ensure collection');
+        } else {
+            $existing = $this->collectionVectorSize();
+
+            if ($existing !== null && $existing !== $expected) {
+                throw new RuntimeException(
+                    "Qdrant collection [{$this->collection}] stores vectors of size {$existing}, "
+                    ."but the configured embedding dimensions are {$expected}. "
+                    .'Reindex the collection or align EMBEDDING_DIMENSIONS with it.',
+                );
+            }
         }
 
         $this->ensurePayloadIndexes();
+    }
+
+    /**
+     * Declared vector size of the existing collection, or null when it cannot be
+     * read (e.g. a named-vector collection).
+     */
+    protected function collectionVectorSize(): ?int
+    {
+        $size = $this->client()
+            ->get("/collections/{$this->collection}")
+            ->json('result.config.params.vectors.size');
+
+        return is_numeric($size) ? (int) $size : null;
     }
 
     /**

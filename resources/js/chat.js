@@ -1,21 +1,46 @@
 /**
  * Per-article AI chat widget — streams answers from /api/chat over SSE.
  *
- * The widget is scoped to a single post (sends its slug) and keeps the
- * conversation history in memory for the current page only. Each message can be
- * copied to the clipboard. Pure client-side JS, safe inside cached HTML.
+ * The widget is scoped to a single post (sends its slug) and keeps its thread
+ * and conversation credential in sessionStorage, so a reload keeps the thread
+ * but closing the tab forgets it. Each message can be copied to the clipboard.
+ * Pure client-side JS, safe inside cached HTML.
  */
 export function chatWidget(slug) {
+    const storageKey = `chat:${slug}`;
+
     return {
         slug: slug,
-        conversationId: (typeof crypto !== 'undefined' && crypto.randomUUID)
-            ? crypto.randomUUID()
-            : 'c-'.concat(Date.now(), '-', Math.random().toString(16).slice(2)),
+        conversationToken: null,
         question: '',
         messages: [],
         error: null,
         loading: false,
         copiedIndex: null,
+
+        init() {
+            try {
+                const stored = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
+                if (stored && Array.isArray(stored.messages)) {
+                    this.messages = stored.messages;
+                    this.conversationToken = stored.token || null;
+                }
+            } catch (e) {
+                this.messages = [];
+            }
+            this.$nextTick(() => this.scrollToBottom());
+        },
+
+        persist() {
+            try {
+                sessionStorage.setItem(storageKey, JSON.stringify({
+                    token: this.conversationToken,
+                    messages: this.messages,
+                }));
+            } catch (e) {
+                // Storage unavailable (private mode): the thread stays in memory.
+            }
+        },
 
         async ask() {
             const q = this.question.trim();
@@ -27,8 +52,9 @@ export function chatWidget(slug) {
             this.loading = true;
             this.question = '';
             this.messages.push({ role: 'user', text: q });
-            this.messages.push({ role: 'assistant', text: '', sources: [], refused: false });
+            this.messages.push({ role: 'assistant', text: '', sources: [], refused: false, incomplete: false });
             const index = this.messages.length - 1;
+            this.persist();
 
             try {
                 const res = await fetch('/api/chat', {
@@ -38,13 +64,14 @@ export function chatWidget(slug) {
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''),
                     },
-                    body: JSON.stringify({ question: q, post: this.slug, conversation: this.conversationId, stream: true }),
+                    body: JSON.stringify({ question: q, post: this.slug, conversation_token: this.conversationToken, stream: true }),
                 });
 
                 if (!res.ok) {
                     const body = await res.json().catch(() => ({}));
                     this.error = body.message || 'The assistant is unavailable. Try again later.';
                     this.messages.splice(index, 1);
+                    this.persist();
 
                     return;
                 }
@@ -77,6 +104,7 @@ export function chatWidget(slug) {
                 this.messages.splice(index, 1);
             } finally {
                 this.loading = false;
+                this.persist();
                 this.$nextTick(() => this.scrollToBottom());
             }
         },
@@ -104,12 +132,19 @@ export function chatWidget(slug) {
 
             if (event.error) {
                 this.error = event.message || 'The assistant is temporarily unavailable.';
+                this.messages[index].incomplete = !!event.incomplete;
             }
 
             if (event.done) {
                 this.messages[index].sources = event.sources || [];
                 this.messages[index].refused = !!event.refused;
+                this.messages[index].incomplete = !!event.incomplete;
+                if (event.conversation_token) {
+                    this.conversationToken = event.conversation_token;
+                }
             }
+
+            this.persist();
         },
 
         async copy(message, index) {

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Llm;
 
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -19,22 +21,36 @@ class OpenAiLlmClient implements LlmClient
 
     private ?string $apiKey;
 
+    private int $completeTimeout;
+
+    private int $streamTimeout;
+
+    /**
+     * Statuses worth retrying: rate limit and server errors.
+     */
+    private const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+
     public function __construct()
     {
         $this->baseUrl = rtrim((string) config('rag.base_url'), '/');
         $this->model = (string) config('rag.chat_model');
         $this->apiKey = config('rag.api_key');
+        $this->completeTimeout = (int) config('rag.timeouts.complete', 30);
+        $this->streamTimeout = (int) config('rag.timeouts.stream', 30);
     }
 
-    public function complete(array $messages, ?int $maxTokens = null): array
+    public function complete(array $messages, ?int $maxTokens = null, ?string $model = null, ?float $temperature = null): array
     {
         $this->guardConfigured();
 
-        $payload = static::payload($this->model, $messages, $maxTokens, stream: false);
+        $model = $model ?? $this->model;
+
+        $payload = static::payload($model, $messages, $maxTokens, stream: false, temperature: $temperature);
 
         $response = Http::withHeaders($this->headers())
             ->asJson()
-            ->timeout(90)
+            ->timeout($this->completeTimeout)
+            ->retry(2, 200, fn (\Throwable $exception): bool => $this->shouldRetry($exception), throw: false)
             ->post($this->baseUrl.'/chat/completions', $payload);
 
         if ($response->failed()) {
@@ -43,18 +59,20 @@ class OpenAiLlmClient implements LlmClient
 
         $body = $response->json();
 
-        return static::result($body, $this->model);
+        return static::result($body, $model);
     }
 
-    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null): array
+    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null, ?string $model = null): array
     {
         $this->guardConfigured();
 
-        $payload = static::payload($this->model, $messages, $maxTokens, stream: true);
+        $model = $model ?? $this->model;
+
+        $payload = static::payload($model, $messages, $maxTokens, stream: true);
 
         $response = Http::withHeaders($this->headers())
             ->withOptions(['stream' => true])
-            ->timeout(120)
+            ->timeout($this->streamTimeout)
             ->send('POST', $this->baseUrl.'/chat/completions', ['json' => $payload]);
 
         if ($response->failed()) {
@@ -110,8 +128,8 @@ class OpenAiLlmClient implements LlmClient
         return static::result([
             'choices' => [['message' => ['content' => $content]]],
             'usage' => ['prompt_tokens' => $tokensIn, 'completion_tokens' => $tokensOut],
-            'model' => $this->model,
-        ], $this->model);
+            'model' => $model,
+        ], $model);
     }
 
     protected function guardConfigured(): void
@@ -119,6 +137,23 @@ class OpenAiLlmClient implements LlmClient
         if (blank($this->apiKey)) {
             throw new RuntimeException('LLM API key is not configured.');
         }
+    }
+
+    /**
+     * Retry only transient failures: connection errors and the statuses in
+     * {@see self::RETRYABLE_STATUSES} (R3, D5). Streaming never retries.
+     */
+    private function shouldRetry(\Throwable $exception): bool
+    {
+        if ($exception instanceof ConnectionException) {
+            return true;
+        }
+
+        if ($exception instanceof RequestException && $exception->response !== null) {
+            return in_array($exception->response->status(), self::RETRYABLE_STATUSES, true);
+        }
+
+        return false;
     }
 
     /**
@@ -135,12 +170,12 @@ class OpenAiLlmClient implements LlmClient
      * @param  list<array{role: string, content: string}>  $messages
      * @return array<string, mixed>
      */
-    protected static function payload(string $model, array $messages, ?int $maxTokens, bool $stream): array
+    protected static function payload(string $model, array $messages, ?int $maxTokens, bool $stream, ?float $temperature = null): array
     {
         $payload = [
             'model' => $model,
             'messages' => $messages,
-            'temperature' => 0.2,
+            'temperature' => $temperature ?? 0.2,
             'stream' => $stream,
         ];
 

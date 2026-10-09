@@ -52,6 +52,7 @@ class RagService
         private readonly EmbeddingService $embedding,
         private readonly LlmClient $llm,
         private readonly Chunker $chunker,
+        private readonly ChatAnswerCache $answers,
     ) {
         $this->collection = (string) config('rag.qdrant.collection', 'content');
         $this->topK = (int) config('rag.retrieval.top_k', 5);
@@ -141,35 +142,77 @@ class RagService
      * Answer a question scoped strictly to a single post (and its linked
      * documents).
      *
-     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
      */
-    public function askForPost(Post $post, string $question, ?string $ip = null, ?int $userId = null, ?int $conversationId = null): array
+    public function askForPost(Post $post, string $question, ?string $ip = null, ?int $userId = null, ?int $conversationId = null, bool $useCache = true): array
     {
         $question = trim($question);
-        $context = $this->resolvePostContext($post, $question);
+        $history = $this->conversationHistory($conversationId);
+        $rewrite = $this->rewriteQuestion($history, $question);
+        $effective = $rewrite['question'];
+        $rewriteTokens = $rewrite['tokens_in'] + $rewrite['tokens_out'];
+        $rewritten = $rewrite['rewritten'] ? $effective : null;
+        $cacheable = $useCache && $history === [];
+        $postId = (int) $post->getKey();
+
+        // A stored answer is served before resolving relevance: a hit spends no
+        // embedding call and skips the relevance gates (R1, D5). Only a
+        // history-free turn is reusable, so the cache is limited to it (D9).
+        if ($cacheable) {
+            $cached = $this->answers->get($postId, $effective);
+
+            if ($cached !== null) {
+                return $this->cachedResult($post, $question, $cached, $ip, $userId, $conversationId);
+            }
+        }
+
+        $context = $this->resolvePostContext($post, $effective);
 
         if ($context['refused']) {
-            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage']));
+            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
+                'rewritten_question' => $rewritten,
+            ]));
 
             return $this->refusedResult();
         }
 
-        $messages = [
-            ['role' => 'system', 'content' => $this->postChatPrompt()],
-            ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
-        ];
+        $messages = $this->postMessages($effective, $context['context'], $history);
 
-        $result = $this->llm->complete($messages, $this->postMaxAnswerTokens);
+        try {
+            $result = $this->llm->complete($messages, $this->postMaxAnswerTokens);
+        } catch (\Throwable $e) {
+            // A failed provider call must still leave a trace (R2, D4).
+            $this->recordUsage(
+                $ip,
+                $userId,
+                $question,
+                extra: $this->observability($post, $conversationId, 'error', [
+                    'rewritten_question' => $rewritten,
+                    'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                ]),
+            );
+
+            throw $e;
+        }
+
+        if ($cacheable) {
+            $this->answers->put($postId, $effective, [
+                'answer' => $result['content'],
+                'sources' => $context['sources'],
+                'model' => $result['model'],
+            ]);
+        }
 
         $this->recordUsage(
             $ip,
             $userId,
             $question,
-            tokensIn: $result['tokens_in'],
+            tokensIn: $result['tokens_in'] + $rewriteTokens,
             tokensOut: $result['tokens_out'],
             chunks: $context['chunks'],
             sources: $context['sources'],
             extra: $this->observability($post, $conversationId, null, [
+                'rewritten_question' => $rewritten,
                 'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
                 'answer' => $result['content'],
             ]),
@@ -179,7 +222,8 @@ class RagService
             'answer' => $result['content'],
             'refused' => false,
             'sources' => $context['sources'],
-            'tokens_in' => $result['tokens_in'],
+            'context' => $context['context'],
+            'tokens_in' => $result['tokens_in'] + $rewriteTokens,
             'tokens_out' => $result['tokens_out'],
             'context_chunks' => $context['chunks'],
             'model' => $result['model'],
@@ -194,31 +238,72 @@ class RagService
     public function askPostStream(Post $post, string $question, callable $onDelta, ?string $ip = null, ?int $userId = null, ?int $conversationId = null): array
     {
         $question = trim($question);
-        $context = $this->resolvePostContext($post, $question);
+        $history = $this->conversationHistory($conversationId);
+        $rewrite = $this->rewriteQuestion($history, $question);
+        $effective = $rewrite['question'];
+        $rewriteTokens = $rewrite['tokens_in'] + $rewrite['tokens_out'];
+        $rewritten = $rewrite['rewritten'] ? $effective : null;
+        $cacheable = $history === [];
+        $postId = (int) $post->getKey();
+
+        // A cache hit is streamed by splitting the stored text, so the visitor
+        // cannot tell it apart from a generated answer (R2, D6).
+        if ($cacheable) {
+            $cached = $this->answers->get($postId, $effective);
+
+            if ($cached !== null) {
+                return $this->streamCachedResult($post, $question, $cached, $onDelta, $ip, $userId, $conversationId);
+            }
+        }
+
+        $context = $this->resolvePostContext($post, $effective);
 
         if ($context['refused']) {
             $onDelta(self::UNRELATED_MESSAGE);
-            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage']));
+            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
+                'rewritten_question' => $rewritten,
+            ]));
 
             return $this->refusedStreamResult();
         }
 
-        $messages = [
-            ['role' => 'system', 'content' => $this->postChatPrompt()],
-            ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context['context']],
-        ];
+        $messages = $this->postMessages($effective, $context['context'], $history);
 
-        $result = $this->llm->stream($messages, $onDelta, $this->postMaxAnswerTokens);
+        try {
+            $result = $this->llm->stream($messages, $onDelta, $this->postMaxAnswerTokens);
+        } catch (\Throwable $e) {
+            // A stream cut mid-flight must still leave a trace (R2, D4).
+            $this->recordUsage(
+                $ip,
+                $userId,
+                $question,
+                extra: $this->observability($post, $conversationId, 'error', [
+                    'rewritten_question' => $rewritten,
+                    'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                ]),
+            );
+
+            throw $e;
+        }
+
+        if ($cacheable) {
+            $this->answers->put($postId, $effective, [
+                'answer' => $result['content'],
+                'sources' => $context['sources'],
+                'model' => $result['model'],
+            ]);
+        }
 
         $this->recordUsage(
             $ip,
             $userId,
             $question,
-            tokensIn: $result['tokens_in'],
+            tokensIn: $result['tokens_in'] + $rewriteTokens,
             tokensOut: $result['tokens_out'],
             chunks: $context['chunks'],
             sources: $context['sources'],
             extra: $this->observability($post, $conversationId, null, [
+                'rewritten_question' => $rewritten,
                 'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
                 'answer' => $result['content'],
             ]),
@@ -227,7 +312,7 @@ class RagService
         return [
             'refused' => false,
             'sources' => $context['sources'],
-            'tokens_in' => $result['tokens_in'],
+            'tokens_in' => $result['tokens_in'] + $rewriteTokens,
             'tokens_out' => $result['tokens_out'],
             'context_chunks' => $context['chunks'],
             'model' => $result['model'],
@@ -250,6 +335,215 @@ class RagService
             'embedding_model' => (string) config('rag.embeddings.model', 'unknown'),
             'top_k' => $this->topK,
         ], $extra);
+    }
+
+    /**
+     * The last turns of the conversation, oldest first, capped at
+     * `rag.conversation.max_turns` (R3). Only complete turns (with an answer)
+     * form the history sent to the model.
+     *
+     * @return list<array{question: string, answer: string}>
+     */
+    private function conversationHistory(?int $conversationId): array
+    {
+        if ($conversationId === null) {
+            return [];
+        }
+
+        $conversation = AiConversation::find($conversationId);
+
+        if ($conversation === null) {
+            return [];
+        }
+
+        $max = max(0, (int) config('rag.conversation.max_turns', 3));
+
+        return $conversation->turns()
+            ->whereNotNull('answer')
+            ->reorder()
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit($max)
+            ->get()
+            ->reverse()
+            ->values()
+            ->map(fn (AiUsage $turn): array => [
+                'question' => (string) $turn->question,
+                'answer' => (string) $turn->answer,
+            ])
+            ->all();
+    }
+
+    /**
+     * Rewrite a follow-up into a standalone question using the conversation
+     * (R1). It is only invoked when there is prior history (R2) and any failure
+     * or empty output degrades to the original question (R4).
+     *
+     * @param  list<array{question: string, answer: string}>  $history
+     * @return array{question: string, tokens_in: int, tokens_out: int, rewritten: bool}
+     */
+    private function rewriteQuestion(array $history, string $question): array
+    {
+        if ($history === []) {
+            return ['question' => $question, 'tokens_in' => 0, 'tokens_out' => 0, 'rewritten' => false];
+        }
+
+        $messages = [['role' => 'system', 'content' => $this->rewritePrompt()]];
+
+        foreach ($history as $turn) {
+            $messages[] = ['role' => 'user', 'content' => $turn['question']];
+            $messages[] = ['role' => 'assistant', 'content' => $turn['answer']];
+        }
+
+        $messages[] = ['role' => 'user', 'content' => $question];
+
+        try {
+            $result = $this->llm->complete(
+                $messages,
+                (int) config('rag.rewrite.max_tokens', 60),
+                $this->rewriteModel(),
+                0.0,
+            );
+        } catch (\Throwable) {
+            return ['question' => $question, 'tokens_in' => 0, 'tokens_out' => 0, 'rewritten' => false];
+        }
+
+        $rewritten = trim($result['content']);
+
+        if ($rewritten === '') {
+            return ['question' => $question, 'tokens_in' => 0, 'tokens_out' => 0, 'rewritten' => false];
+        }
+
+        return [
+            'question' => $rewritten,
+            'tokens_in' => $result['tokens_in'],
+            'tokens_out' => $result['tokens_out'],
+            'rewritten' => true,
+        ];
+    }
+
+    private function rewriteModel(): ?string
+    {
+        $model = config('rag.rewrite.model') ?: config('rag.chat_model');
+
+        return is_string($model) && $model !== '' ? $model : null;
+    }
+
+    private function rewritePrompt(): string
+    {
+        return 'You rewrite a follow-up question into a standalone question. Use the previous '
+            .'conversation to resolve pronouns, references and ellipsis, keep the original language '
+            .'and intent, and add no new information. Return only the rewritten question.';
+    }
+
+    /**
+     * Build the final message list: the system prompt, the recent turns as
+     * user/assistant pairs, and the current question with its context (R3, D5).
+     *
+     * @param  list<array{question: string, answer: string}>  $history
+     * @return list<array{role: string, content: string}>
+     */
+    private function postMessages(string $question, string $context, array $history): array
+    {
+        $messages = [['role' => 'system', 'content' => $this->postChatPrompt()]];
+
+        foreach ($history as $turn) {
+            $messages[] = ['role' => 'user', 'content' => $turn['question']];
+            $messages[] = ['role' => 'assistant', 'content' => $turn['answer']];
+        }
+
+        $messages[] = ['role' => 'user', 'content' => $question."\n\nUse only the context below:\n\n".$context];
+
+        return $messages;
+    }
+
+    /**
+     * Serve a stored answer without touching the provider, logging the turn as a
+     * cache hit with no token usage (R4, D8).
+     *
+     * @param  array{answer: string, sources: list<array<string, mixed>>, model: string}  $cached
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    private function cachedResult(Post $post, string $question, array $cached, ?string $ip, ?int $userId, ?int $conversationId): array
+    {
+        $this->recordUsage(
+            $ip,
+            $userId,
+            $question,
+            chunks: 0,
+            sources: $cached['sources'],
+            extra: $this->observability($post, $conversationId, null, [
+                'cache_hit' => true,
+                'answer' => $cached['answer'],
+            ]),
+        );
+
+        return [
+            'answer' => $cached['answer'],
+            'refused' => false,
+            'sources' => $cached['sources'],
+            'context' => '',
+            'tokens_in' => 0,
+            'tokens_out' => 0,
+            'context_chunks' => 0,
+            'model' => $cached['model'],
+        ];
+    }
+
+    /**
+     * Streamed variant of {@see self::cachedResult()} (R2, D6).
+     *
+     * @param  array{answer: string, sources: list<array<string, mixed>>, model: string}  $cached
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     */
+    private function streamCachedResult(Post $post, string $question, array $cached, callable $onDelta, ?string $ip, ?int $userId, ?int $conversationId): array
+    {
+        foreach ($this->splitAnswer($cached['answer']) as $delta) {
+            $onDelta($delta);
+        }
+
+        $this->recordUsage(
+            $ip,
+            $userId,
+            $question,
+            chunks: 0,
+            sources: $cached['sources'],
+            extra: $this->observability($post, $conversationId, null, [
+                'cache_hit' => true,
+                'answer' => $cached['answer'],
+            ]),
+        );
+
+        return [
+            'refused' => false,
+            'sources' => $cached['sources'],
+            'tokens_in' => 0,
+            'tokens_out' => 0,
+            'context_chunks' => 0,
+            'model' => $cached['model'],
+        ];
+    }
+
+    /**
+     * Split stored text into small deltas so a cache hit looks streamed (D6).
+     *
+     * @return list<string>
+     */
+    private function splitAnswer(string $answer, int $size = 24): array
+    {
+        $length = mb_strlen($answer);
+
+        if ($length === 0) {
+            return [];
+        }
+
+        $deltas = [];
+
+        for ($offset = 0; $offset < $length; $offset += $size) {
+            $deltas[] = mb_substr($answer, $offset, $size);
+        }
+
+        return $deltas;
     }
 
     /**
@@ -373,7 +667,7 @@ class RagService
     }
 
     /**
-     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
      */
     private function refusedResult(): array
     {
@@ -381,6 +675,7 @@ class RagService
             'answer' => self::UNRELATED_MESSAGE,
             'refused' => true,
             'sources' => [],
+            'context' => '',
             'tokens_in' => 0,
             'tokens_out' => 0,
             'context_chunks' => 0,
@@ -449,6 +744,7 @@ class RagService
             'title' => $document->title,
             'url' => $document->post ? route('posts.show', $document->post, absolute: false) : null,
             'post_id' => $document->post_id,
+            'embedding_model' => (string) config('rag.embeddings.model', 'unknown'),
         ];
 
         $this->indexChunks(null, 'document', $this->chunker->chunk($text), $payload, 'doc:'.$document->id);
@@ -513,6 +809,7 @@ class RagService
             'source_id' => $this->contentKey($model),
             'title' => (string) ($model->title ?? ''),
             'url' => $this->modelUrl($model),
+            'embedding_model' => (string) config('rag.embeddings.model', 'unknown'),
         ];
     }
 

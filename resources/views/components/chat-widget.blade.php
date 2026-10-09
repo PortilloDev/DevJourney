@@ -39,6 +39,11 @@
                                         class="ml-1.5 inline-block h-3 w-3 animate-spin rounded-full border-2 border-accent-500 border-t-transparent align-middle"></span>
                                 </p>
 
+                                <p x-show="message.incomplete" x-cloak
+                                   class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                                    This answer was cut off before it finished. Please ask again.
+                                </p>
+
                                 <div x-show="hasSources(message)" x-cloak class="mt-2 flex flex-wrap items-center gap-2">
                                     <span class="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Sources</span>
                                     <template x-for="(source, j) in message.sources" :key="j">

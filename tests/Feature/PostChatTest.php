@@ -226,22 +226,28 @@ class PostChatTest extends TestCase
         $this->assertStringContainsString('data: [DONE]', $content);
     }
 
-    // R1 + R2: every turn is logged with full detail and grouped by conversation
+    // R1 + R2 + R6: every turn is logged with full detail, grouped by the
+    // conversation the server issues on the first turn.
     public function test_conversation_turns_are_logged_and_grouped(): void
     {
         $post = $this->postA();
         app(RagService::class)->indexContent($post);
 
-        $payload = [
+        $first = $this->postJson('/api/chat', [
             'question' => 'How does hexagonal architecture isolate the domain?',
             'post' => 'hexagonal',
-            'conversation' => 'sess-123',
-        ];
+        ])->assertOk();
 
-        $this->postJson('/api/chat', $payload)->assertOk();
-        $this->postJson('/api/chat', $payload)->assertOk();
+        $token = $first->json('conversation_token');
+        $this->assertIsString($token);
 
-        $conversation = AiConversation::query()->where('session_id', 'sess-123')->first();
+        $this->postJson('/api/chat', [
+            'question' => 'How does hexagonal architecture isolate the domain?',
+            'post' => 'hexagonal',
+            'conversation_token' => $token,
+        ])->assertOk();
+
+        $conversation = AiConversation::query()->first();
         $this->assertNotNull($conversation);
         $this->assertSame(2, $conversation->turns_count);
         $this->assertSame(2, $conversation->turns()->count());
@@ -375,7 +381,7 @@ final class SpyLlm implements LlmClient
 
     public ?int $lastMaxTokens = null;
 
-    public function complete(array $messages, ?int $maxTokens = null): array
+    public function complete(array $messages, ?int $maxTokens = null, ?string $model = null, ?float $temperature = null): array
     {
         $this->calls++;
         $this->lastMessages = $messages;
@@ -384,7 +390,7 @@ final class SpyLlm implements LlmClient
         return ['content' => 'Concise answer.', 'tokens_in' => 12, 'tokens_out' => 4, 'model' => 'spy'];
     }
 
-    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null): array
+    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null, ?string $model = null): array
     {
         $this->calls++;
         $this->lastMessages = $messages;

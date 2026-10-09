@@ -160,7 +160,7 @@ final class FakeEmbeddingService implements EmbeddingService
 
 final class FakeLlmClient implements LlmClient
 {
-    public function complete(array $messages, ?int $maxTokens = null): array
+    public function complete(array $messages, ?int $maxTokens = null, ?string $model = null, ?float $temperature = null): array
     {
         return [
             'content' => 'Hello from the fake LLM',
@@ -170,7 +170,7 @@ final class FakeLlmClient implements LlmClient
         ];
     }
 
-    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null): array
+    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null, ?string $model = null): array
     {
         $content = 'Streamed answer about DDD.';
         ($onDelta)($content);

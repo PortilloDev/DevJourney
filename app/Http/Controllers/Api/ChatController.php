@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api;
 use App\Models\AiConversation;
 use App\Models\AiUsage;
 use App\Models\Post;
+use App\Services\Rag\ConversationToken;
 use App\Services\Rag\RagService;
 use App\Services\SiteSettingService;
 use Illuminate\Http\JsonResponse;
@@ -19,7 +20,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ChatController
 {
-    public function __invoke(Request $request, RagService $rag): JsonResponse|StreamedResponse
+    public function __invoke(Request $request, RagService $rag, ConversationToken $tokens): JsonResponse|StreamedResponse
     {
         if (app(SiteSettingService::class)->chatApiBlocked()) {
             return response()->json([
@@ -62,8 +63,9 @@ class ChatController
             ], 422);
         }
 
-        $sessionId = trim((string) $request->input('conversation', ''));
-        if ($sessionId === '' || mb_strlen($sessionId) > 100) {
+        $sessionId = $tokens->conversationId((string) $request->input('conversation_token', ''));
+
+        if ($sessionId === null) {
             $sessionId = (string) Str::uuid();
         }
 
@@ -77,14 +79,16 @@ class ChatController
             ],
         );
 
+        $conversationToken = $tokens->issue($sessionId);
+
         if ($request->boolean('stream')) {
-            return $this->streamAnswer($request, $rag, $post, $conversation->id, $question, $ip);
+            return $this->streamAnswer($request, $rag, $post, $conversation->id, $question, $ip, $conversationToken);
         }
 
-        return $this->jsonAnswer($request, $rag, $post, $conversation->id, $question, $ip);
+        return $this->jsonAnswer($request, $rag, $post, $conversation->id, $question, $ip, $conversationToken);
     }
 
-    protected function jsonAnswer(Request $request, RagService $rag, Post $post, int $conversationId, string $question, string $ip): JsonResponse
+    protected function jsonAnswer(Request $request, RagService $rag, Post $post, int $conversationId, string $question, string $ip, string $conversationToken): JsonResponse
     {
         $startedAt = microtime(true);
 
@@ -102,16 +106,19 @@ class ChatController
 
         $this->recordLatency($ip, $startedAt);
 
-        return response()->json($result);
+        return response()->json(['conversation_token' => $conversationToken] + $result);
     }
 
-    protected function streamAnswer(Request $request, RagService $rag, Post $post, int $conversationId, string $question, string $ip): StreamedResponse
+    protected function streamAnswer(Request $request, RagService $rag, Post $post, int $conversationId, string $question, string $ip, string $conversationToken): StreamedResponse
     {
         $startedAt = microtime(true);
 
-        return response()->stream(function () use ($rag, $post, $conversationId, $question, $ip, $request, $startedAt): void {
+        return response()->stream(function () use ($rag, $post, $conversationId, $question, $ip, $request, $startedAt, $conversationToken): void {
+            $emitted = false;
+
             try {
-                $meta = $rag->askPostStream($post, $question, function (string $delta): void {
+                $meta = $rag->askPostStream($post, $question, function (string $delta) use (&$emitted): void {
+                    $emitted = true;
                     $this->sendSse(['delta' => $delta]);
                 }, $ip, $request->user()?->getKey(), $conversationId);
 
@@ -119,19 +126,29 @@ class ChatController
 
                 $this->sendSse([
                     'done' => true,
+                    'incomplete' => false,
                     'refused' => $meta['refused'],
                     'sources' => $meta['sources'],
                     'tokens_in' => $meta['tokens_in'],
                     'tokens_out' => $meta['tokens_out'],
                     'context_chunks' => $meta['context_chunks'],
                     'model' => $meta['model'],
+                    'conversation_token' => $conversationToken,
                 ]);
             } catch (RuntimeException $e) {
                 Log::warning('Chat stream error', ['message' => $e->getMessage()]);
-                $this->sendSse(['error' => 'service_error', 'message' => 'The assistant is temporarily unavailable.']);
+                $this->sendSse([
+                    'error' => 'service_error',
+                    'message' => 'The assistant is temporarily unavailable.',
+                    'incomplete' => $emitted,
+                ]);
             } catch (\Throwable $e) {
                 Log::error('Chat stream unexpected error', ['exception' => $e]);
-                $this->sendSse(['error' => 'service_error', 'message' => 'Something went wrong. Please try again.']);
+                $this->sendSse([
+                    'error' => 'service_error',
+                    'message' => 'Something went wrong. Please try again.',
+                    'incomplete' => $emitted,
+                ]);
             }
 
             echo "data: [DONE]\n\n";

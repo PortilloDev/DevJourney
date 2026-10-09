@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Widgets;
 
 use App\Models\AiUsage;
+use App\Services\Llm\CircuitBreaker;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
@@ -23,6 +24,10 @@ class AiUsageOverviewWidget extends BaseWidget
         $questions = (clone $usage)->where('sources', '!=', null)->count();
         $avgLatency = $total->avg('latency_ms');
 
+        $circuit = app(CircuitBreaker::class);
+        $circuitOpen = $circuit->isOpen();
+        $openedAt = $circuit->openedAt();
+
         return [
             Stat::make('Today requests', (string) $requests)
                 ->description('Chat calls')
@@ -40,6 +45,12 @@ class AiUsageOverviewWidget extends BaseWidget
                 ->description('Across today')
                 ->descriptionIcon('heroicon-m-clock')
                 ->color('warning'),
+            Stat::make('Provider circuit', $circuitOpen ? 'Open' : 'Closed')
+                ->description($circuitOpen && $openedAt !== null
+                    ? 'Since '.$openedAt->toDateTimeString()
+                    : 'Calls allowed')
+                ->descriptionIcon($circuitOpen ? 'heroicon-m-exclamation-triangle' : 'heroicon-m-check-circle')
+                ->color($circuitOpen ? 'danger' : 'success'),
         ];
     }
 }

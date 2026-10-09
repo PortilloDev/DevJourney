@@ -148,7 +148,22 @@ resources/views/
   un valor incorrecto rompe enlaces y subidas.
 - **Claves del RAG** en `.env` para el chat/indexado: `LLM_API_KEY`,
   `EMBEDDING_API_KEY`, `QDRANT_API_KEY` (la misma que usa el contenedor `qdrant`).
+- **Timeouts del servidor web > timeouts del proveedor LLM.** El cliente aborta
+  la llamada al LLM a los `RAG_TIMEOUT_COMPLETE` / `RAG_TIMEOUT_STREAM` segundos
+  (30 por defecto). Comprueba que `fastcgi_read_timeout` de nginx (120 s en
+  `docker-fpm-setup/nginx.conf`) y `request_terminate_timeout` de PHP-FPM (sin
+  límite por defecto) son **mayores**: si el servidor corta antes, el stream se
+  trunca sin evento de error y el widget se queda cargando.
 - La imagen **ya incluye `poppler-utils`** (`pdftotext`) para indexar PDFs.
+- **Evaluación de calidad del chat (`php artisan ai:eval`).** Recorre
+  `tests/Eval/cases.json`, mide recuperación (acierto y MRR), respuestas y
+  rechazos, e imprime un informe que además guarda en `storage/app/eval/`. **Gasta
+  cuota real del proveedor**, así que no se ejecuta sola ni está en el scheduler:
+  lánzala a mano, sobre todo antes de un despliegue que toque prompt, `top_k`,
+  umbrales o modelo. Añade `--judge` para puntuar la fundamentación con
+  `RAG_EVAL_JUDGE_MODEL` y `--min=0.8` (o `RAG_EVAL_MIN_SCORE`) para que devuelva
+  un código de salida distinto de cero si la tasa de acierto baja del umbral. No
+  registra turnos en el histórico ni usa la caché de respuestas.
 - Tras desplegar, ejecuta:
   ```bash
   php artisan migrate --force      # nuevas tablas

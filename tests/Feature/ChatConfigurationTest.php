@@ -122,12 +122,12 @@ final class ConfigTestEmbedding implements EmbeddingService
 
 final class ConfigTestLlm implements LlmClient
 {
-    public function complete(array $messages, ?int $maxTokens = null): array
+    public function complete(array $messages, ?int $maxTokens = null, ?string $model = null, ?float $temperature = null): array
     {
         return ['content' => 'ok', 'tokens_in' => 1, 'tokens_out' => 1, 'model' => 'test'];
     }
 
-    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null): array
+    public function stream(array $messages, callable $onDelta, ?int $maxTokens = null, ?string $model = null): array
     {
         $onDelta('ok');
 

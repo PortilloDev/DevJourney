@@ -19,9 +19,11 @@ use Illuminate\Support\Carbon;
  * @property string $ip_address
  * @property int|null $user_id
  * @property string $question
+ * @property string|null $rewritten_question
  * @property string|null $prompt
  * @property string|null $answer
  * @property bool $refused
+ * @property bool $cache_hit
  * @property string|null $refused_stage
  * @property string $model
  * @property string|null $provider
@@ -46,9 +48,11 @@ class AiUsage extends Model
         'ip_address',
         'user_id',
         'question',
+        'rewritten_question',
         'prompt',
         'answer',
         'refused',
+        'cache_hit',
         'refused_stage',
         'model',
         'provider',
@@ -68,6 +72,7 @@ class AiUsage extends Model
             'post_id' => 'integer',
             'user_id' => 'integer',
             'refused' => 'boolean',
+            'cache_hit' => 'boolean',
             'top_k' => 'integer',
             'tokens_in' => 'integer',
             'tokens_out' => 'integer',

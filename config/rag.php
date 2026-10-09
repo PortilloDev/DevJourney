@@ -54,6 +54,51 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Provider timeouts (seconds)
+    |--------------------------------------------------------------------------
+    |
+    | Hard cap on how long a provider call may run. Keep nginx's
+    | `fastcgi_read_timeout` and PHP-FPM's `request_terminate_timeout` above these
+    | values (see README) so the app, not the web server, decides when to abort.
+    |
+    */
+    'timeouts' => [
+        'complete' => (int) env('RAG_TIMEOUT_COMPLETE', 30),
+        'stream' => (int) env('RAG_TIMEOUT_STREAM', 30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Provider circuit breaker
+    |--------------------------------------------------------------------------
+    |
+    | Consecutive provider failures above `threshold` open the circuit for
+    | `cooldown_seconds`, during which chat calls fail fast without invoking the
+    | provider. `threshold` is exclusive: the circuit opens when failures exceed it.
+    |
+    */
+    'circuit' => [
+        'threshold' => (int) env('RAG_CIRCUIT_THRESHOLD', 5),
+        'cooldown_seconds' => (int) env('RAG_CIRCUIT_COOLDOWN', 300),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Answer / embedding cache
+    |--------------------------------------------------------------------------
+    |
+    | Stored answers are reused for a repeated, normalized question on the same
+    | post until the post changes or the TTL elapses. Question embeddings are
+    | cached separately, keyed by the embedding model. TTLs are in seconds.
+    |
+    */
+    'cache' => [
+        'answer_ttl' => (int) env('RAG_CACHE_ANSWER_TTL', 604800),
+        'embedding_ttl' => (int) env('RAG_CACHE_EMBEDDING_TTL', 604800),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Per-post chat
     |--------------------------------------------------------------------------
     |
@@ -66,6 +111,25 @@ return [
         'max_answer_tokens' => (int) env('RAG_POST_MAX_ANSWER_TOKENS', 200),
         'related_threshold' => (float) env('RAG_POST_RELATED_THRESHOLD', 0.5),
         'unrelated_threshold' => (float) env('RAG_POST_UNRELATED_THRESHOLD', 0.15),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Conversational memory
+    |--------------------------------------------------------------------------
+    |
+    | A follow-up question is rewritten into a standalone one by `rewrite.model`
+    | (falls back to the chat model when empty), capped at `rewrite.max_tokens`.
+    | The last `conversation.max_turns` turns are sent as history.
+    |
+    */
+    'rewrite' => [
+        'model' => env('RAG_REWRITE_MODEL'),
+        'max_tokens' => (int) env('RAG_REWRITE_MAX_TOKENS', 60),
+    ],
+
+    'conversation' => [
+        'max_turns' => (int) env('RAG_CONVERSATION_MAX_TURNS', 3),
     ],
 
     /*
@@ -88,6 +152,21 @@ return [
     'indexing' => [
         'chunk_size' => (int) env('RAG_CHUNK_SIZE', 900),
         'chunk_overlap' => (int) env('RAG_CHUNK_OVERLAP', 120),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Answer quality evaluation
+    |--------------------------------------------------------------------------
+    |
+    | Parameters for the `ai:eval` command. `judge_model` scores grounding when
+    | `--judge` is passed (defaults to the chat model); `min_score` is the
+    | pass-rate floor that turns the command's exit code non-zero.
+    |
+    */
+    'eval' => [
+        'judge_model' => env('RAG_EVAL_JUDGE_MODEL', env('LLM_CHAT_MODEL', 'gpt-4o-mini')),
+        'min_score' => (float) env('RAG_EVAL_MIN_SCORE', 0),
     ],
 
     /*

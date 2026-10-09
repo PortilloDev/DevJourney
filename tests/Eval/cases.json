@@ -1,0 +1,199 @@
+[
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "Why did the author start writing everything in English?",
+        "expects": "answer",
+        "must_include": ["english"],
+        "expected_source": "The premise"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "What rule did the author make for himself?",
+        "expects": "answer",
+        "must_include": ["english"],
+        "expected_source": "The premise"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "What is the weekly writing cadence in the plan?",
+        "expects": "answer",
+        "must_include": ["journal", "week"],
+        "expected_source": "The plan"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "How often does the author do a technical challenge?",
+        "expects": "answer",
+        "must_include": ["challenge"],
+        "expected_source": "The plan"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "How does the author track his language progress over time?",
+        "expects": "answer",
+        "must_include": ["cefr"],
+        "expected_source": "The plan"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "What does the author expect from this habit?",
+        "expects": "answer",
+        "must_include": ["progress"],
+        "expected_source": "What I expect"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "What should look different after a year?",
+        "expects": "answer",
+        "must_include": ["code"],
+        "expected_source": "What I expect"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "What is the main goal of this approach?",
+        "expects": "answer",
+        "must_include": ["domain", "laravel"],
+        "expected_source": "The goal"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "What should the domain be independent from?",
+        "expects": "answer",
+        "must_include": ["laravel"],
+        "expected_source": "The goal"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "What mistake does the author warn against?",
+        "expects": "answer",
+        "must_include": ["cargo"],
+        "expected_source": "The goal"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "What are ports and adapters in this context?",
+        "expects": "answer",
+        "must_include": ["interfaces"],
+        "expected_source": "Ports and adapters"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "Who defines the interfaces and who implements them?",
+        "expects": "answer",
+        "must_include": ["adapters"],
+        "expected_source": "Ports and adapters"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "Where does this architecture pay off?",
+        "expects": "answer",
+        "must_include": ["testing"],
+        "expected_source": "Where it pays off"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "What becomes trivial when the boundaries are respected?",
+        "expects": "answer",
+        "must_include": ["testing"],
+        "expected_source": "Where it pays off"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "What does the author study on Monday?",
+        "expects": "answer",
+        "must_include": ["caching"],
+        "expected_source": "Monday: fundamentals"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "Which topics are covered in the fundamentals session?",
+        "expects": "answer",
+        "must_include": ["queues"],
+        "expected_source": "Monday: fundamentals"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "How deeply is each topic studied on Monday?",
+        "expects": "answer",
+        "must_include": ["deep"],
+        "expected_source": "Monday: fundamentals"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "What happens during the midweek session?",
+        "expects": "answer",
+        "must_include": ["mock"],
+        "expected_source": "Midweek: a mock"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "What examples of systems are designed during the mock?",
+        "expects": "answer",
+        "must_include": ["url shortener"],
+        "expected_source": "Midweek: a mock"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "What happens on Friday?",
+        "expects": "answer",
+        "must_include": ["write"],
+        "expected_source": "Friday: write-up"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "Why does the author publish a write-up every week?",
+        "expects": "answer",
+        "must_include": ["clarity"],
+        "expected_source": "Friday: write-up"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "What is the capital city of Australia?",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "Explain quantum entanglement in simple terms.",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "why-i-started-writing-everything-in-english",
+        "question": "How do I bake sourdough bread at home?",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "Who won the 2022 World Cup?",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "What is the best recipe for paella?",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "hexagonal-architecture-in-a-laravel-app-pragmatically",
+        "question": "How do I train a puppy to sit?",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "What are the symptoms of the common cold?",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "Tell me a joke about chickens.",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "How tall is Mount Everest in feet?",
+        "expects": "refusal"
+    },
+    {
+        "post_slug": "reading-for-a-system-design-interview-my-weekly-loop",
+        "question": "What is the plot of the movie Inception?",
+        "expects": "refusal"
+    }
+]

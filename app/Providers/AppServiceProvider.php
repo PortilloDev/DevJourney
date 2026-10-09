@@ -10,13 +10,17 @@ use App\Models\Milestone;
 use App\Models\Post;
 use App\Models\Project;
 use App\Models\SiteSetting;
+use App\Services\Embedding\CachedEmbeddingService;
 use App\Services\Embedding\EmbeddingService;
 use App\Services\Embedding\OpenAiEmbeddingService;
+use App\Services\Llm\CircuitBreaker;
+use App\Services\Llm\CircuitBreakerLlmClient;
 use App\Services\Llm\LlmClient;
 use App\Services\Llm\OpenAiLlmClient;
 use App\Services\LogService;
 use App\Services\MarkdownRenderer;
 use App\Services\PageCacheService;
+use App\Services\Rag\ChatAnswerCache;
 use App\Services\Rag\RagService;
 use App\Services\SeoMetaService;
 use App\Services\SiteSettingService;
@@ -31,6 +35,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
+use RuntimeException;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -41,14 +46,33 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SiteSettingService::class);
         $this->app->singleton(LogService::class);
         $this->app->singleton(RagService::class);
+        $this->app->singleton(ChatAnswerCache::class);
+        $this->app->singleton(CircuitBreaker::class);
 
         $this->app->bind(VectorStore::class, function (): VectorStore {
-            return config('rag.qdrant.enabled', true)
-                ? new QdrantVectorStore
-                : new InMemoryVectorStore;
+            if (config('rag.qdrant.enabled', true)) {
+                return new QdrantVectorStore;
+            }
+
+            // The in-memory store is empty per request: a silent degradation.
+            // Reserve it for the tests and fail loudly anywhere else (R4).
+            if ($this->app->environment('testing')) {
+                return new InMemoryVectorStore;
+            }
+
+            throw new RuntimeException(
+                'The vector store is disabled (rag.qdrant.enabled=false) outside the testing '
+                .'environment. Enable Qdrant (QDRANT_ENABLED=true) or fix the configuration.',
+            );
         });
-        $this->app->bind(EmbeddingService::class, OpenAiEmbeddingService::class);
-        $this->app->bind(LlmClient::class, OpenAiLlmClient::class);
+        $this->app->bind(EmbeddingService::class, function (): EmbeddingService {
+            // Cache question embeddings without touching the provider client.
+            return new CachedEmbeddingService(new OpenAiEmbeddingService);
+        });
+        $this->app->bind(LlmClient::class, function (): LlmClient {
+            // Trip open on consecutive provider failures without touching RagService.
+            return new CircuitBreakerLlmClient(new OpenAiLlmClient, app(CircuitBreaker::class));
+        });
 
         // SEO meta is populated per request by controllers and read by the layout.
         $this->app->scoped(SeoMetaService::class);
@@ -93,6 +117,14 @@ class AppServiceProvider extends ServiceProvider
             $model::saved($log('content.saved'));
             $model::deleted($log('content.deleted'));
         }
+
+        // Editing a post invalidates its stored chat answers: the per-post
+        // revision is part of every answer cache key (R3, D2).
+        Post::saving(function (Post $post): void {
+            if ($post->exists) {
+                app(ChatAnswerCache::class)->bumpRevision((int) $post->getKey());
+            }
+        });
 
         // Content: index published posts/challenges/projects when they are
         // published, and remove their vectors when deleted. The credential check
