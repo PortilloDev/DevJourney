@@ -1,5 +1,11 @@
 # syntax=docker/dockerfile:1
 
+# Versión exacta de PHP del runtime. Fijada a propósito en lugar de una etiqueta
+# flotante: la versión queda visible en git y el build es reproducible.
+# Subirla es el único paso para aplicar un parche de seguridad de PHP.
+# Parche de CVE-2026-109618 / CVE-2026-109619: 8.4.27.
+ARG PHP_VERSION=8.4.27
+
 ################################################################################
 # Stage 1 — Frontend assets (Vite / Tailwind / Alpine)
 ################################################################################
@@ -34,7 +40,7 @@ RUN composer install \
 ################################################################################
 # Stage 3 — Application runtime (PHP-FPM + Nginx vía Supervisor)
 ################################################################################
-FROM php:8.4-fpm AS app
+FROM php:${PHP_VERSION}-fpm AS app
 
 # System dependencies + PHP extensions + Nginx + Supervisor.
 RUN apt-get update && apt-get install -y \
@@ -55,6 +61,9 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # aparte (se carga después de www.conf y gana), no depende del formato exacto
 # de la config por defecto de la imagen base.
 COPY docker-fpm-setup/zz-socket.conf /usr/local/etc/php-fpm.d/zz-socket.conf
+
+# Mitigaciones de CVE-2026-109618 / CVE-2026-109619 aplicadas en el pool.
+COPY docker-fpm-setup/zz-cve-2026-109618.conf /usr/local/etc/php-fpm.d/zz-cve-2026-109618.conf
 
 COPY docker-fpm-setup/nginx.conf /etc/nginx/sites-enabled/app.conf
 COPY docker-fpm-setup/supervisord.conf /etc/supervisor/conf.d/supervisord.conf

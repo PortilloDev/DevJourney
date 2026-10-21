@@ -4,6 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Compañero obligatorio de php_admin_value[memory_limit] = -1: acota la
+    # memoria de una petición desbocada al contenedor en vez de dejar que el
+    # OOM killer del host elija víctima (mysql, qdrant...). Ajustar al host.
+    mem_limit: 1536m
     volumes:
         - ./.env:/var/www/html/.env
         - storage:/var/www/html/storage
