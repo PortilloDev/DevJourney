@@ -139,9 +139,44 @@ export function chatWidget(slug) {
                 this.messages[index].sources = event.sources || [];
                 this.messages[index].refused = !!event.refused;
                 this.messages[index].incomplete = !!event.incomplete;
+                this.messages[index].usageId = event.usage_id ?? null;
                 if (event.conversation_token) {
                     this.conversationToken = event.conversation_token;
                 }
+            }
+
+            this.persist();
+        },
+
+        async rate(message, value) {
+            if (!message.usageId || !this.conversationToken) {
+                return;
+            }
+
+            const previous = message.rating ?? null;
+            message.rating = value;
+            this.persist();
+
+            try {
+                const res = await fetch('/api/chat/feedback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? ''),
+                    },
+                    body: JSON.stringify({
+                        conversation: this.conversationToken,
+                        usage_id: message.usageId,
+                        rating: value,
+                    }),
+                });
+
+                if (!res.ok) {
+                    throw new Error('feedback_rejected');
+                }
+            } catch (e) {
+                message.rating = previous;
+                this.error = 'Could not register your feedback.';
             }
 
             this.persist();

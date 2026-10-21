@@ -7,9 +7,14 @@
   `ChatController::__invoke()`.
 - La migración `2026_08_25_000001_encrypt_visit_personal_data` establece el
   precedente del proyecto para los datos personales de `visits`.
-- Las cuotas consultan la IP con igualdad exacta:
-  `AiUsage::query()->where('ip_address', $ip)` y la clave de caché
-  `ai:req:{ip}:{fecha}`. `ChatController::recordLatency()` también busca por IP.
+- Las cuotas viven en `App\Services\Rag\ChatQuota` sobre `RateLimiter`:
+  `visitorKey()` es `ai:req:{ip}:{fecha}` y se compara con igualdad exacta;
+  `RagService` consume la cuota con `ChatQuota::consume($ip)` justo antes de la
+  llamada al modelo. El presupuesto de tokens consulta
+  `AiUsage::query()->where('ip_address', $ip)` (suma SQL de
+  `tokens_in + tokens_out`).
+- `ChatController::recordLatency(?int $usageId, ...)` localiza el turno por su id
+  (ya no por IP).
 - `App\Models\Document` tiene `post_id`, `status` e `indexed_at`, y se indexa en
   `RagService::indexDocument()` con payload `source_type='document'`,
   `source_id='doc:{id}'`, `post_id`. `App\Jobs\IndexDocumentJob` hace el trabajo
@@ -29,9 +34,12 @@
   truncado a 64 caracteres, no cifrada. Motivo: las cuotas necesitan igualdad
   exacta y una búsqueda indexada; un valor cifrado con IV aleatorio no permite
   ninguna de las dos cosas, y nunca hace falta recuperar la IP original.
-- **D2.** La derivación vive en un único sitio, un método del servicio que ya
-  registra el uso, y se aplica también a la clave de caché de la cuota de
-  peticiones. Motivo: que no queden dos representaciones de la misma IP.
+- **D2.** La derivación vive en un único método (un helper de `RagService` o un
+  pequeño `IpHasher`) y se aplica **una sola vez en el controlador**, justo tras
+  obtener la IP: el valor derivado es el que fluye a `ChatQuota` (clave de cuota),
+  a la fila de `ai_conversations` y a `RagService` (registro y consumo de cuota).
+  Motivo: que no queden dos representaciones de la misma IP y que la cuota y el
+  histórico se calculen sobre el mismo valor.
 - **D3.** Las filas existentes se migran con una migración que recalcula el valor
   derivado de cada `ip_address`. Las que no se puedan derivar se dejan como están
   y la poda a 30 días las retira. Motivo: no perder el histórico reciente ni

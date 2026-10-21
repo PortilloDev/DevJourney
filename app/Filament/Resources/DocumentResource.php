@@ -58,6 +58,11 @@ class DocumentResource extends Resource
                 ])
                 ->default('pending')
                 ->disabled(),
+            Forms\Components\Toggle::make('is_public')
+                ->label('Public (usable in the chat)')
+                ->helperText('When off, this document is not indexed and its content is not usable by the article chat.')
+                ->default(true)
+                ->columnSpanFull(),
         ]);
     }
 

@@ -134,11 +134,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Cost estimation
+    |--------------------------------------------------------------------------
+    |
+    | Price per million tokens in euros, indexed by the chat model, split into
+    | `input` and `output`. A model with no entry here records no cost. Used to
+    | fill `ai_usage.cost_eur` when a turn is logged. Keep the numbers in sync
+    | with the provider's current prices.
+    |
+    */
+    'pricing' => [
+        'gpt-4o-mini' => ['input' => 0.15, 'output' => 0.60],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Public chat limits (per visitor)
     |--------------------------------------------------------------------------
     */
     'limits' => [
         'requests_per_day' => (int) env('RAG_REQUESTS_PER_DAY', 20),
+        'global_requests_per_day' => (int) env('RAG_GLOBAL_REQUESTS_PER_DAY', 500),
         'tokens_per_day' => (int) env('RAG_TOKENS_PER_DAY', 20000),
         'max_input_tokens' => (int) env('RAG_MAX_INPUT_TOKENS', 2000),
         'max_context_chunks' => (int) env('RAG_CONTEXT_CHUNKS', 5),

@@ -28,6 +28,15 @@ class IndexDocumentJob implements ShouldQueue
             return;
         }
 
+        // A non-public document is never indexed; if it was public before, its
+        // points are removed so it stops being retrievable from the chat.
+        if (! $document->is_public) {
+            $rag->deleteDocument($document);
+            $document->update(['status' => 'indexed', 'indexed_at' => null]);
+
+            return;
+        }
+
         $document->update(['status' => 'pending', 'indexed_at' => null]);
 
         if (! $extractor->available()) {

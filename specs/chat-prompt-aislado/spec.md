@@ -1,8 +1,8 @@
 ---
 feature: chat-prompt-aislado
-estado: borrador
+estado: aprobada
 creada: 2026-10-08
-aprobada:
+aprobada: 2026-10-21
 ---
 
 # Prompt aislado y respuesta nunca truncada

@@ -29,6 +29,12 @@ turno se registra con cero tokens. `estimateTokens()` ya existe
 Redis es el store de caché en producción (`AGENTS.md`), así que un contador
 compartido entre procesos está disponible sin infraestructura nueva.
 
+`RagService` recibe la IP en sus cuatro caminos y es quien decide, tras la
+comprobación local de relevancia, si va a llamar al modelo; por eso es el punto
+natural donde se consume la cuota de forma atómica, y no el controlador. El
+controlador conserva una comprobación sin consumir para devolver el 429 antes de
+empezar a responder.
+
 ## Decisiones
 
 - **D1.** El techo global es un contador diario en caché, clave
@@ -36,29 +42,34 @@ compartido entre procesos está disponible sin infraestructura nueva.
   `rag.limits.global_requests_per_day` (`RAG_GLOBAL_REQUESTS_PER_DAY`, por defecto
   `500`). Motivo: acota el gasto máximo del día con la infraestructura que ya hay.
 - **D2.** El contador global se incrementa en el mismo punto que la cuota por
-  visitante: cuando la petición va a generar una respuesta del modelo. Motivo: el
-  techo mide gasto, y lo que gasta es la llamada al modelo.
+  visitante: justo antes de la llamada al modelo de chat, dentro de `RagService`.
+  Motivo: el techo mide gasto, y lo que gasta es la llamada al modelo; así un
+  rechazo local, que no llama a nadie, no consume.
 - **D3.** Orden nuevo del controlador: flags → resolución del post → validación de
-  la pregunta → cuota por IP → techo global → presupuesto de tokens → delegación
-  en `RagService`. Motivo: R2; una petición malformada no debe costarle cuota a
-  nadie.
+  la pregunta → comprobación *sin consumir* de la cuota por IP y del techo global
+  (para poder devolver el 429 antes de empezar a responder) → presupuesto de
+  tokens → delegación en `RagService`. El consumo real ocurre dentro de
+  `RagService`, que lo hace de forma atómica antes de invocar al modelo y comunica
+  el agotamiento para que el controlador lo traduzca a 429. Motivo: R2 y R5; una
+  petición malformada o rechazada localmente no debe costarle cuota a nadie, pero
+  dos peticiones simultáneas no pueden pasar ambas.
 - **D4.** Una pregunta rechazada por la comprobación **local** de relevancia no
-  consume cuota de peticiones, porque no cuesta ninguna llamada externa. El
-  rechazo en la etapa de **embeddings** sí ha gastado una llamada, y ese consumo se
-  refleja en el presupuesto de tokens, no en el de peticiones. Motivo: cada
-  contador mide lo que de verdad cuesta.
-- **D5.** `Illuminate\Support\Facades\RateLimiter::attempt()` sustituye a
-  `Cache::add` + `Cache::increment` para la cuota por IP y para el techo global.
-  Motivo: resuelve R5 con la misma cantidad de código y es la herramienta que
-  Laravel ya trae.
+  consume cuota de peticiones porque no llega a la llamada al modelo. El rechazo
+  en la etapa de **embeddings** sí gasta una llamada de embeddings, pero tampoco
+  consume cuota de peticiones, porque la cuota acota las llamadas de chat. Motivo:
+  cada contador mide lo que de verdad cuesta.
+- **D5.** Un servicio `ChatQuota` encapsula la cuota por IP y el techo global
+  sobre `Illuminate\Support\Facades\RateLimiter::attempt()` (atómico) y expone,
+  además, una comprobación sin consumir para el 429 temprano del controlador.
+  Motivo: resuelve R5 con la herramienta que Laravel ya trae y esconde la mecánica
+  del contador tras una pieza testeable.
 - **D6.** `tokenBudgetReached()` pasa a
   `->sum(DB::raw('tokens_in + tokens_out'))`. Motivo: R4.
 - **D7.** `OpenAiLlmClient` estima siempre que falte `usage`: los tokens de salida
   a partir del contenido acumulado y los de entrada a partir de la suma de los
   mensajes enviados, con `estimateTokens()`. La condición `$tokensIn === 0`
-  desaparece. El turno registra el origen de la cifra en el campo `provider` ya
-  existente, sin columna nueva. Motivo: R3; un presupuesto que a veces no cuenta
-  no es un presupuesto.
+  desaparece. Motivo: R3; un presupuesto que a veces no cuenta no es un
+  presupuesto.
 - **D8.** `Retry-After` se calcula con los segundos que devuelve
   `RateLimiter::availableIn()` para los límites por minuto, y con los segundos
   hasta la medianoche del huso de la aplicación para las cuotas diarias. Motivo:

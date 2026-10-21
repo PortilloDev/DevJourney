@@ -48,8 +48,12 @@
 - **D8.** Las cifras del panel se calculan con agregaciones sobre `ai_usage` del
   día, sin tabla de resumen. Motivo: el volumen de este sitio no lo justifica.
 - **D9.** «Turnos atendidos con cero fragmentos» se obtiene de
-  `refused = false AND context_chunks = 0`. Es una invariante que no debería
-  ocurrir nunca y su presencia señala un fallo de recuperación. Motivo: es la
+  `refused = false AND context_chunks = 0 AND cache_hit = false`. Excluir los
+  aciertos de caché es imprescindible: `cachedResult()` y
+  `streamCachedResult()` registran `context_chunks = 0` de forma legítima, así
+  que sin esa condición la cifra incluiría todos los aciertos de caché y no
+  bajaría a cero casi nunca, dejando la señal inútil. Con la exclusión, un turno
+  con cero fragmentos señala un fallo de recuperación. Motivo: es la
   comprobación de salud más barata que permiten los datos ya registrados.
 
 ## Cambios de datos

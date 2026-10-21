@@ -172,6 +172,9 @@ resources/views/
   ```
 - **No** hagas `php artisan config:cache` en la build: el `.env` se monta en
   runtime y una caché de build lo ignoraría.
+- **Rotar `APP_KEY`** invalida la derivación de las IPs del chat (HMAC con la
+  clave), de modo que las cuotas diarias del día en curso se reinician. Evita
+  rotarla a mitad de día salvo que aceptes ese efecto.
 
 ### 🚀 Despliegue
 

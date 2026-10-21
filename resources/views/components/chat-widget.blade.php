@@ -58,9 +58,24 @@
                                     </template>
                                 </div>
 
-                                <button type="button" @click="copy(message, i)" x-show="message.text"
-                                        class="mt-1 text-[11px] text-slate-400 transition hover:text-accent-600 dark:hover:text-accent-400"
-                                        x-text="copiedIndex === i ? 'Copied!' : 'Copy'"></button>
+                                <div class="mt-1 flex items-center gap-3">
+                                    <button type="button" @click="copy(message, i)" x-show="message.text"
+                                            class="text-[11px] text-slate-400 transition hover:text-accent-600 dark:hover:text-accent-400"
+                                            x-text="copiedIndex === i ? 'Copied!' : 'Copy'"></button>
+
+                                    <template x-if="message.usageId">
+                                        <div class="flex items-center gap-3">
+                                            <button type="button" @click="rate(message, 1)"
+                                                    class="text-[11px] transition"
+                                                    :class="message.rating === 1 ? 'font-semibold text-accent-600 dark:text-accent-400' : 'text-slate-400 hover:text-accent-600 dark:hover:text-accent-400'"
+                                                    aria-label="Mark this answer as useful">Helpful</button>
+                                            <button type="button" @click="rate(message, -1)"
+                                                    class="text-[11px] transition"
+                                                    :class="message.rating === -1 ? 'font-semibold text-red-600 dark:text-red-400' : 'text-slate-400 hover:text-red-600 dark:hover:text-red-400'"
+                                                    aria-label="Mark this answer as not useful">Not helpful</button>
+                                        </div>
+                                    </template>
+                                </div>
                             </div>
                         </template>
                     </div>

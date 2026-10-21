@@ -34,6 +34,8 @@ use Illuminate\Support\Carbon;
  * @property int $context_chunks
  * @property int $latency_ms
  * @property string|null $sources
+ * @property int|null $rating
+ * @property float|null $cost_eur
  * @property Carbon $created_at
  */
 class AiUsage extends Model
@@ -63,6 +65,8 @@ class AiUsage extends Model
         'context_chunks',
         'latency_ms',
         'sources',
+        'rating',
+        'cost_eur',
     ];
 
     protected function casts(): array
@@ -78,6 +82,8 @@ class AiUsage extends Model
             'tokens_out' => 'integer',
             'context_chunks' => 'integer',
             'latency_ms' => 'integer',
+            'rating' => 'integer',
+            'cost_eur' => 'float',
             'created_at' => 'datetime',
         ];
     }

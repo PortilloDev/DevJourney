@@ -31,6 +31,8 @@ class AiUsageResource extends Resource
         return $form->schema([
             Forms\Components\TextInput::make('model')->disabled(),
             Forms\Components\Textarea::make('question')->disabled(),
+            Forms\Components\TextInput::make('rating')->disabled(),
+            Forms\Components\TextInput::make('cost_eur')->label('Cost (€)')->disabled(),
         ]);
     }
 
@@ -51,6 +53,24 @@ class AiUsageResource extends Resource
                     ->alignEnd()
                     ->sortable(),
                 Tables\Columns\TextColumn::make('context_chunks')->label('Chunks')->alignCenter()->toggleable(),
+                Tables\Columns\TextColumn::make('rating')
+                    ->label('Rating')
+                    ->badge()
+                    ->formatStateUsing(fn (?int $state): string => match ($state) {
+                        1 => 'Useful',
+                        -1 => 'Not useful',
+                        default => '—',
+                    })
+                    ->color(fn (?int $state): string => match ($state) {
+                        1 => 'success',
+                        -1 => 'danger',
+                        default => 'gray',
+                    }),
+                Tables\Columns\TextColumn::make('cost_eur')
+                    ->label('Cost (€)')
+                    ->state(fn (AiUsage $record): string => $record->cost_eur !== null ? number_format($record->cost_eur, 6) : '—')
+                    ->alignEnd()
+                    ->toggleable(),
             ])
             ->filters([
                 Tables\Filters\Filter::make('created_at')

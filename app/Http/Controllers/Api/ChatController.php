@@ -4,15 +4,18 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\QuotaExceededException;
 use App\Models\AiConversation;
 use App\Models\AiUsage;
 use App\Models\Post;
+use App\Services\Rag\ChatQuota;
 use App\Services\Rag\ConversationToken;
+use App\Services\Rag\IpHasher;
 use App\Services\Rag\RagService;
 use App\Services\SiteSettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -31,19 +34,9 @@ class ChatController
 
         $ip = $request->ip() ?? 'unknown';
 
-        if ($this->requestLimitReached($ip)) {
-            return response()->json([
-                'error' => 'daily_request_limit',
-                'message' => 'You have reached the daily chat limit. Try again tomorrow.',
-            ], 429);
-        }
-
-        if ($this->tokenBudgetReached($ip)) {
-            return response()->json([
-                'error' => 'daily_token_limit',
-                'message' => 'You have reached the daily usage budget. Try again tomorrow.',
-            ], 429);
-        }
+        // Single derivation point: everything downstream (quota, conversation and
+        // the recorded turn) uses this non-reversible value, never the raw IP.
+        $ip = app(IpHasher::class)->hash($ip);
 
         $post = Post::query()->published()->where('slug', (string) $request->input('post', ''))->first();
 
@@ -61,6 +54,23 @@ class ChatController
                 'error' => 'invalid_question',
                 'message' => 'Ask a question between 1 and 1000 characters.',
             ], 422);
+        }
+
+        $quota = app(ChatQuota::class);
+        $quotaCode = $quota->blockedCode($ip);
+
+        if ($quotaCode !== null) {
+            return response()->json([
+                'error' => $quotaCode,
+                'message' => 'You have reached the daily chat limit. Try again tomorrow.',
+            ], 429)->header('Retry-After', (string) ($quota->availableIn($ip) ?? $this->secondsUntilReset()));
+        }
+
+        if ($this->tokenBudgetReached($ip)) {
+            return response()->json([
+                'error' => 'daily_token_limit',
+                'message' => 'You have reached the daily usage budget. Try again tomorrow.',
+            ], 429)->header('Retry-After', (string) $this->secondsUntilReset());
         }
 
         $sessionId = $tokens->conversationId((string) $request->input('conversation_token', ''));
@@ -94,6 +104,11 @@ class ChatController
 
         try {
             $result = $rag->askForPost($post, $question, $ip, $request->user()?->getKey(), $conversationId);
+        } catch (QuotaExceededException $e) {
+            return response()->json([
+                'error' => $e->errorCode,
+                'message' => 'You have reached the daily chat limit. Try again tomorrow.',
+            ], 429)->header('Retry-After', (string) (app(ChatQuota::class)->availableIn($ip) ?? $this->secondsUntilReset()));
         } catch (RuntimeException $e) {
             Log::warning('Chat error', ['message' => $e->getMessage()]);
 
@@ -104,7 +119,7 @@ class ChatController
             return response()->json(['error' => 'service_error', 'message' => 'Something went wrong. Please try again.'], 503);
         }
 
-        $this->recordLatency($ip, $startedAt);
+        $this->recordLatency($result['usage_id'] ?? null, $startedAt);
 
         return response()->json(['conversation_token' => $conversationToken] + $result);
     }
@@ -122,7 +137,7 @@ class ChatController
                     $this->sendSse(['delta' => $delta]);
                 }, $ip, $request->user()?->getKey(), $conversationId);
 
-                $this->recordLatency($ip, $startedAt);
+                $this->recordLatency($meta['usage_id'] ?? null, $startedAt);
 
                 $this->sendSse([
                     'done' => true,
@@ -133,7 +148,14 @@ class ChatController
                     'tokens_out' => $meta['tokens_out'],
                     'context_chunks' => $meta['context_chunks'],
                     'model' => $meta['model'],
+                    'usage_id' => $meta['usage_id'] ?? null,
                     'conversation_token' => $conversationToken,
+                ]);
+            } catch (QuotaExceededException $e) {
+                $this->sendSse([
+                    'error' => $e->errorCode,
+                    'message' => 'You have reached the daily chat limit. Try again tomorrow.',
+                    'incomplete' => $emitted,
                 ]);
             } catch (RuntimeException $e) {
                 Log::warning('Chat stream error', ['message' => $e->getMessage()]);
@@ -171,37 +193,31 @@ class ChatController
         flush();
     }
 
-    protected function requestLimitReached(string $ip): bool
-    {
-        $key = 'ai:req:'.$ip.':'.now()->toDateString();
-
-        if (! Cache::add($key, 1, 86400)) {
-            Cache::increment($key);
-        }
-
-        return (int) Cache::get($key) > (int) config('rag.limits.requests_per_day', 20);
-    }
-
     protected function tokenBudgetReached(string $ip): bool
     {
         $tokens = AiUsage::query()
             ->where('ip_address', $ip)
             ->whereDate('created_at', now()->toDateString())
-            ->get()
-            ->sum(fn (AiUsage $usage) => $usage->totalTokens());
+            ->sum(DB::raw('tokens_in + tokens_out'));
 
-        return $tokens >= (int) config('rag.limits.tokens_per_day', 20000);
+        return (int) $tokens >= (int) config('rag.limits.tokens_per_day', 20000);
     }
 
-    protected function recordLatency(string $ip, float $startedAt): void
+    protected function secondsUntilReset(): int
     {
-        $last = AiUsage::query()
-            ->where('ip_address', $ip)
-            ->latest('created_at')
-            ->first();
+        return max(1, now()->endOfDay()->getTimestamp() - now()->getTimestamp());
+    }
 
-        if ($last !== null) {
-            $last->update(['latency_ms' => (int) ((microtime(true) - $startedAt) * 1000)]);
+    protected function recordLatency(?int $usageId, float $startedAt): void
+    {
+        if ($usageId === null) {
+            return;
+        }
+
+        $usage = AiUsage::find($usageId);
+
+        if ($usage !== null) {
+            $usage->update(['latency_ms' => (int) ((microtime(true) - $startedAt) * 1000)]);
         }
     }
 }

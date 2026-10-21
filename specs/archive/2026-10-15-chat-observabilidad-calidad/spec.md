@@ -1,8 +1,8 @@
 ---
 feature: chat-observabilidad-calidad
-estado: borrador
+estado: archivada
 creada: 2026-10-08
-aprobada:
+aprobada: 2026-10-15
 ---
 
 # Señales de calidad y coste del chat

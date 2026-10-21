@@ -36,6 +36,12 @@ class Document extends Model
         'pages',
         'status',
         'indexed_at',
+        'is_public',
+    ];
+
+    /** @var array<string, mixed> */
+    protected $attributes = [
+        'is_public' => true,
     ];
 
     protected function casts(): array
@@ -45,6 +51,7 @@ class Document extends Model
             'size' => 'integer',
             'pages' => 'integer',
             'indexed_at' => 'datetime',
+            'is_public' => 'boolean',
         ];
     }
 

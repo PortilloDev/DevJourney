@@ -1,8 +1,8 @@
 ---
 feature: chat-privacidad-registro
-estado: borrador
+estado: archivada
 creada: 2026-10-08
-aprobada:
+aprobada: 2026-10-21
 ---
 
 # Privacidad del registro del chat

@@ -1,8 +1,8 @@
 ---
 feature: chat-presupuesto-global
-estado: borrador
+estado: archivada
 creada: 2026-10-08
-aprobada:
+aprobada: 2026-10-15
 ---
 
 # Presupuesto global y cuotas que cuentan bien
@@ -23,11 +23,11 @@ justo el camino que usa el widget en producción.
 
 ### R1 — Techo diario del sitio
 
-El sistema DEBE rechazar las peticiones de chat cuando el número de respuestas generadas en el día alcance el máximo global configurado.
+El sistema DEBE rechazar las peticiones de chat cuando el número de llamadas al modelo de chat del día alcance el máximo global configurado.
 
 **Escenario R1-E1:** DADO que se alcanzó el máximo global del día / CUANDO cualquier visitante envía una pregunta válida / ENTONCES recibe una respuesta 429 con el código `daily_global_limit` y no se realiza ninguna petición al endpoint de chat completions
 
-**Escenario R1-E2:** DADO un día sin consumo previo / CUANDO un visitante envía una pregunta válida / ENTONCES se atiende con normalidad y el contador global refleja una respuesta generada
+**Escenario R1-E2:** DADO un día sin consumo previo / CUANDO un visitante envía una pregunta válida / ENTONCES se atiende con normalidad y el contador global refleja una llamada al modelo
 
 ### R2 — Solo las peticiones atendidas consumen cuota
 
@@ -45,7 +45,7 @@ El sistema DEBE registrar un consumo de tokens mayor que cero en todo turno aten
 
 El sistema DEBE calcular el consumo diario de tokens mediante una agregación en la base de datos.
 
-**Escenario R4-E1:** DADO varios turnos registrados hoy para una misma IP / CUANDO se comprueba el presupuesto de tokens / ENTONCES se ejecuta una única consulta de agregación y no se recuperan las filas individuales
+**Escenario R4-E1:** DADO varios turnos registrados hoy para una misma IP / CUANDO se comprueba el presupuesto de tokens / ENTONCES el presupuesto es la suma de los tokens de entrada y de salida de esos turnos
 
 ### R5 — Conteo atómico de peticiones
 

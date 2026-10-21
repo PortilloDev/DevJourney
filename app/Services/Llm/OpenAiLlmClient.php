@@ -58,8 +58,14 @@ class OpenAiLlmClient implements LlmClient
         }
 
         $body = $response->json();
+        $content = (string) ($body['choices'][0]['message']['content'] ?? '');
 
-        return static::result($body, $model);
+        return static::result(
+            $body,
+            $model,
+            $this->estimateMessagesTokens($messages),
+            $this->estimateTokens($content),
+        );
     }
 
     public function stream(array $messages, callable $onDelta, ?int $maxTokens = null, ?string $model = null): array
@@ -122,8 +128,8 @@ class OpenAiLlmClient implements LlmClient
             }
         }
 
-        $tokensIn = (int) ($usage['prompt_tokens'] ?? 0);
-        $tokensOut = (int) ($usage['completion_tokens'] ?? ($tokensIn === 0 ? 0 : $this->estimateTokens($content)));
+        $tokensIn = (int) ($usage['prompt_tokens'] ?? $this->estimateMessagesTokens($messages));
+        $tokensOut = (int) ($usage['completion_tokens'] ?? $this->estimateTokens($content));
 
         return static::result([
             'choices' => [['message' => ['content' => $content]]],
@@ -194,12 +200,12 @@ class OpenAiLlmClient implements LlmClient
      * @param  array<string, mixed>  $body
      * @return array{content: string, tokens_in: int, tokens_out: int, model: string}
      */
-    protected static function result(array $body, string $defaultModel): array
+    protected static function result(array $body, string $defaultModel, ?int $estimatedIn = null, ?int $estimatedOut = null): array
     {
         return [
             'content' => $body['choices'][0]['message']['content'] ?? '',
-            'tokens_in' => (int) ($body['usage']['prompt_tokens'] ?? 0),
-            'tokens_out' => (int) ($body['usage']['completion_tokens'] ?? 0),
+            'tokens_in' => (int) ($body['usage']['prompt_tokens'] ?? $estimatedIn ?? 0),
+            'tokens_out' => (int) ($body['usage']['completion_tokens'] ?? $estimatedOut ?? 0),
             'model' => $body['model'] ?? $defaultModel,
         ];
     }
@@ -220,5 +226,19 @@ class OpenAiLlmClient implements LlmClient
     private function estimateTokens(string $content): int
     {
         return (int) ceil(mb_strlen($content) / 4);
+    }
+
+    /**
+     * @param  list<array{role: string, content: string}>  $messages
+     */
+    private function estimateMessagesTokens(array $messages): int
+    {
+        $total = 0;
+
+        foreach ($messages as $message) {
+            $total += $this->estimateTokens($message['content']);
+        }
+
+        return $total;
     }
 }

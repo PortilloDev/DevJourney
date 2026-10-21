@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Rag;
 
+use App\Exceptions\QuotaExceededException;
 use App\Models\AiConversation;
 use App\Models\AiUsage;
 use App\Models\Challenge;
@@ -53,6 +54,7 @@ class RagService
         private readonly LlmClient $llm,
         private readonly Chunker $chunker,
         private readonly ChatAnswerCache $answers,
+        private readonly ChatQuota $quota,
     ) {
         $this->collection = (string) config('rag.qdrant.collection', 'content');
         $this->topK = (int) config('rag.retrieval.top_k', 5);
@@ -65,7 +67,23 @@ class RagService
     }
 
     /**
-     * @return array{answer: string|null, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * Reserves the visitor's daily quota and the site-wide ceiling right before
+     * a chat model call, so a turn that never reaches the model costs nothing.
+     * A request without an IP (internal callers) is not charged.
+     */
+    private function reserveQuota(?string $ip): void
+    {
+        if ($ip === null) {
+            return;
+        }
+
+        if (! $this->quota->consume($ip)) {
+            throw new QuotaExceededException($this->quota->blockedCode($ip) ?? 'daily_global_limit');
+        }
+    }
+
+    /**
+     * @return array{answer: string|null, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
     public function ask(string $question, ?string $ip = null, ?int $userId = null): array
     {
@@ -73,10 +91,12 @@ class RagService
 
         $retrieved = $this->retrieve($question);
         if ($retrieved['refused']) {
-            $this->recordUsage($ip, $userId, $question, refused: true);
+            $usage = $this->recordUsage($ip, $userId, $question, refused: true);
 
-            return $this->emptyResult();
+            return $this->emptyResult($usage?->getKey());
         }
+
+        $this->reserveQuota($ip);
 
         $result = $this->llm->complete(
             [
@@ -86,7 +106,7 @@ class RagService
             $this->maxInputTokens,
         );
 
-        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $retrieved['chunks'], sources: $retrieved['sources']);
+        $usage = $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $retrieved['chunks'], sources: $retrieved['sources']);
 
         return [
             'answer' => $result['content'],
@@ -96,6 +116,7 @@ class RagService
             'tokens_out' => $result['tokens_out'],
             'context_chunks' => $retrieved['chunks'],
             'model' => $result['model'],
+            'usage_id' => $usage?->getKey(),
         ];
     }
 
@@ -104,7 +125,7 @@ class RagService
      * piece of text; the returned array mirrors the non-streamed shape minus the
      * answer (which is streamed).
      *
-     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
     public function askStream(string $question, callable $onDelta, ?string $ip = null, ?int $userId = null): array
     {
@@ -112,10 +133,12 @@ class RagService
 
         $retrieved = $this->retrieve($question);
         if ($retrieved['refused']) {
-            $this->recordUsage($ip, $userId, $question, refused: true);
+            $usage = $this->recordUsage($ip, $userId, $question, refused: true);
 
-            return $this->emptyStreamResult();
+            return $this->emptyStreamResult($usage?->getKey());
         }
+
+        $this->reserveQuota($ip);
 
         $result = $this->llm->stream(
             [
@@ -126,7 +149,7 @@ class RagService
             $this->maxInputTokens,
         );
 
-        $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $retrieved['chunks'], sources: $retrieved['sources']);
+        $usage = $this->recordUsage($ip, $userId, $question, tokensIn: $result['tokens_in'], tokensOut: $result['tokens_out'], chunks: $retrieved['chunks'], sources: $retrieved['sources']);
 
         return [
             'refused' => false,
@@ -135,6 +158,7 @@ class RagService
             'tokens_out' => $result['tokens_out'],
             'context_chunks' => $retrieved['chunks'],
             'model' => $result['model'],
+            'usage_id' => $usage?->getKey(),
         ];
     }
 
@@ -142,7 +166,7 @@ class RagService
      * Answer a question scoped strictly to a single post (and its linked
      * documents).
      *
-     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
     public function askForPost(Post $post, string $question, ?string $ip = null, ?int $userId = null, ?int $conversationId = null, bool $useCache = true): array
     {
@@ -169,14 +193,16 @@ class RagService
         $context = $this->resolvePostContext($post, $effective);
 
         if ($context['refused']) {
-            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
+            $usage = $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
                 'rewritten_question' => $rewritten,
             ]));
 
-            return $this->refusedResult();
+            return $this->refusedResult($usage?->getKey());
         }
 
         $messages = $this->postMessages($effective, $context['context'], $history);
+
+        $this->reserveQuota($ip);
 
         try {
             $result = $this->llm->complete($messages, $this->postMaxAnswerTokens);
@@ -188,7 +214,7 @@ class RagService
                 $question,
                 extra: $this->observability($post, $conversationId, 'error', [
                     'rewritten_question' => $rewritten,
-                    'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                    'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
                 ]),
             );
 
@@ -203,7 +229,7 @@ class RagService
             ]);
         }
 
-        $this->recordUsage(
+        $usage = $this->recordUsage(
             $ip,
             $userId,
             $question,
@@ -213,7 +239,7 @@ class RagService
             sources: $context['sources'],
             extra: $this->observability($post, $conversationId, null, [
                 'rewritten_question' => $rewritten,
-                'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
                 'answer' => $result['content'],
             ]),
         );
@@ -227,13 +253,14 @@ class RagService
             'tokens_out' => $result['tokens_out'],
             'context_chunks' => $context['chunks'],
             'model' => $result['model'],
+            'usage_id' => $usage?->getKey(),
         ];
     }
 
     /**
      * Streamed variant of {@see self::askForPost()}.
      *
-     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
     public function askPostStream(Post $post, string $question, callable $onDelta, ?string $ip = null, ?int $userId = null, ?int $conversationId = null): array
     {
@@ -260,14 +287,16 @@ class RagService
 
         if ($context['refused']) {
             $onDelta(self::UNRELATED_MESSAGE);
-            $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
+            $usage = $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
                 'rewritten_question' => $rewritten,
             ]));
 
-            return $this->refusedStreamResult();
+            return $this->refusedStreamResult($usage?->getKey());
         }
 
         $messages = $this->postMessages($effective, $context['context'], $history);
+
+        $this->reserveQuota($ip);
 
         try {
             $result = $this->llm->stream($messages, $onDelta, $this->postMaxAnswerTokens);
@@ -279,7 +308,7 @@ class RagService
                 $question,
                 extra: $this->observability($post, $conversationId, 'error', [
                     'rewritten_question' => $rewritten,
-                    'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                    'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
                 ]),
             );
 
@@ -294,7 +323,7 @@ class RagService
             ]);
         }
 
-        $this->recordUsage(
+        $usage = $this->recordUsage(
             $ip,
             $userId,
             $question,
@@ -304,7 +333,7 @@ class RagService
             sources: $context['sources'],
             extra: $this->observability($post, $conversationId, null, [
                 'rewritten_question' => $rewritten,
-                'prompt' => (string) json_encode($messages, JSON_UNESCAPED_UNICODE),
+                'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
                 'answer' => $result['content'],
             ]),
         );
@@ -316,6 +345,7 @@ class RagService
             'tokens_out' => $result['tokens_out'],
             'context_chunks' => $context['chunks'],
             'model' => $result['model'],
+            'usage_id' => $usage?->getKey(),
         ];
     }
 
@@ -458,15 +488,30 @@ class RagService
     }
 
     /**
+     * The prompt recorded for audit: system + question only. The retrieved
+     * context (and the history) is reconstructed from the turn's `sources`
+     * (point ids) and the sibling turns, so it is not stored a second time.
+     *
+     * @return list<array{role: string, content: string}>
+     */
+    private function storedPrompt(string $question): array
+    {
+        return [
+            ['role' => 'system', 'content' => $this->postChatPrompt()],
+            ['role' => 'user', 'content' => $question],
+        ];
+    }
+
+    /**
      * Serve a stored answer without touching the provider, logging the turn as a
      * cache hit with no token usage (R4, D8).
      *
      * @param  array{answer: string, sources: list<array<string, mixed>>, model: string}  $cached
-     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
     private function cachedResult(Post $post, string $question, array $cached, ?string $ip, ?int $userId, ?int $conversationId): array
     {
-        $this->recordUsage(
+        $usage = $this->recordUsage(
             $ip,
             $userId,
             $question,
@@ -487,6 +532,7 @@ class RagService
             'tokens_out' => 0,
             'context_chunks' => 0,
             'model' => $cached['model'],
+            'usage_id' => $usage?->getKey(),
         ];
     }
 
@@ -494,7 +540,7 @@ class RagService
      * Streamed variant of {@see self::cachedResult()} (R2, D6).
      *
      * @param  array{answer: string, sources: list<array<string, mixed>>, model: string}  $cached
-     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
     private function streamCachedResult(Post $post, string $question, array $cached, callable $onDelta, ?string $ip, ?int $userId, ?int $conversationId): array
     {
@@ -502,7 +548,7 @@ class RagService
             $onDelta($delta);
         }
 
-        $this->recordUsage(
+        $usage = $this->recordUsage(
             $ip,
             $userId,
             $question,
@@ -521,6 +567,7 @@ class RagService
             'tokens_out' => 0,
             'context_chunks' => 0,
             'model' => $cached['model'],
+            'usage_id' => $usage?->getKey(),
         ];
     }
 
@@ -667,9 +714,9 @@ class RagService
     }
 
     /**
-     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{answer: string, refused: bool, sources: list<array<string, mixed>>, context: string, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
-    private function refusedResult(): array
+    private function refusedResult(?int $usageId = null): array
     {
         return [
             'answer' => self::UNRELATED_MESSAGE,
@@ -680,13 +727,14 @@ class RagService
             'tokens_out' => 0,
             'context_chunks' => 0,
             'model' => config('rag.chat_model', 'unknown'),
+            'usage_id' => $usageId,
         ];
     }
 
     /**
-     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
-    private function refusedStreamResult(): array
+    private function refusedStreamResult(?int $usageId = null): array
     {
         return [
             'refused' => true,
@@ -695,6 +743,7 @@ class RagService
             'tokens_out' => 0,
             'context_chunks' => 0,
             'model' => config('rag.chat_model', 'unknown'),
+            'usage_id' => $usageId,
         ];
     }
 
@@ -738,6 +787,12 @@ class RagService
 
     public function indexDocument(Document $document, string $text): void
     {
+        if (! $document->is_public) {
+            $this->deleteDocument($document);
+
+            return;
+        }
+
         $payload = [
             'source_type' => 'document',
             'source_id' => 'doc:'.$document->id,
@@ -860,6 +915,7 @@ class RagService
 
         foreach (array_slice($hits, 0, $this->contextChunks) as $hit) {
             $sources[] = [
+                'point_id' => (string) $hit['id'],
                 'title' => $hit['payload']['title'] ?? null,
                 'url' => $hit['payload']['url'] ?? null,
                 'heading' => $hit['payload']['heading'] ?? null,
@@ -920,26 +976,49 @@ class RagService
      * @param  list<array<string, mixed>>  $sources
      * @param  array<string, mixed>  $extra
      */
-    private function recordUsage(?string $ip, ?int $userId, string $question, bool $refused = false, int $tokensIn = 0, int $tokensOut = 0, int $chunks = 0, array $sources = [], array $extra = []): void
+    private function recordUsage(?string $ip, ?int $userId, string $question, bool $refused = false, int $tokensIn = 0, int $tokensOut = 0, int $chunks = 0, array $sources = [], array $extra = []): ?AiUsage
     {
         if ($ip === null) {
-            return;
+            return null;
         }
 
-        AiUsage::create(array_merge([
+        $model = (string) config('rag.chat_model', 'unknown');
+
+        $usage = AiUsage::create(array_merge([
             'ip_address' => $ip,
             'user_id' => $userId,
             'question' => $question,
-            'model' => config('rag.chat_model', 'unknown'),
+            'model' => $model,
             'tokens_in' => $tokensIn,
             'tokens_out' => $tokensOut,
             'context_chunks' => $chunks,
             'latency_ms' => 0,
             'refused' => $refused,
             'sources' => $sources !== [] ? json_encode($sources) : null,
+            'cost_eur' => $this->estimateCost($model, $tokensIn, $tokensOut),
         ], $extra));
 
         $this->touchConversation($extra['conversation_id'] ?? null, $tokensIn + $tokensOut);
+
+        return $usage;
+    }
+
+    /**
+     * Estimated cost of a turn in euros from the model's configured price per
+     * million tokens. Returns null when the model has no configured pricing.
+     */
+    private function estimateCost(string $model, int $tokensIn, int $tokensOut): ?float
+    {
+        $pricing = config('rag.pricing.'.$model);
+
+        if (! is_array($pricing)) {
+            return null;
+        }
+
+        $input = (float) ($pricing['input'] ?? 0);
+        $output = (float) ($pricing['output'] ?? 0);
+
+        return ($tokensIn / 1_000_000) * $input + ($tokensOut / 1_000_000) * $output;
     }
 
     private function touchConversation(mixed $conversationId, int $tokens): void
@@ -961,9 +1040,9 @@ class RagService
     }
 
     /**
-     * @return array{answer: string|null, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{answer: string|null, refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
-    private function emptyResult(): array
+    private function emptyResult(?int $usageId = null): array
     {
         return [
             'answer' => null,
@@ -973,13 +1052,14 @@ class RagService
             'tokens_out' => 0,
             'context_chunks' => 0,
             'model' => config('rag.chat_model', 'unknown'),
+            'usage_id' => $usageId,
         ];
     }
 
     /**
-     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string}
+     * @return array{refused: bool, sources: list<array<string, mixed>>, tokens_in: int, tokens_out: int, context_chunks: int, model: string, usage_id: int|null}
      */
-    private function emptyStreamResult(): array
+    private function emptyStreamResult(?int $usageId = null): array
     {
         return [
             'refused' => true,
@@ -988,6 +1068,7 @@ class RagService
             'tokens_out' => 0,
             'context_chunks' => 0,
             'model' => config('rag.chat_model', 'unknown'),
+            'usage_id' => $usageId,
         ];
     }
 }
