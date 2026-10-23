@@ -1,5 +1,7 @@
 @extends('layouts.public')
 
+@section('container_class', 'max-w-[96rem]')
+
 @section('progress')
     <div class="fixed inset-x-0 top-0 z-50 h-1 bg-transparent">
         <div id="reading-progress" class="h-full w-0 bg-accent-500 transition-[width] duration-75"></div>
@@ -7,7 +9,14 @@
 @endsection
 
 @section('content')
-    <div class="lg:grid lg:grid-cols-[1fr_16rem] lg:gap-12">
+    <div class="lg:grid lg:grid-cols-[12rem_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[14rem_minmax(0,1fr)_26rem] xl:gap-12">
+        {{-- TOC sidebar (left) --}}
+        <aside class="hidden lg:block">
+            <div class="sticky top-24">
+                <x-toc :items="$toc" />
+            </div>
+        </aside>
+
         <article class="min-w-0">
             <nav class="mb-6 text-sm text-slate-500 dark:text-slate-400" aria-label="Breadcrumb">
                 <a href="{{ route('posts.index') }}" class="hover:text-accent-500">Journal</a>
@@ -53,9 +62,6 @@
                 <a href="https://www.linkedin.com/sharing/share-offsite/?url={{ urlencode(route('posts.show', $post)) }}" rel="noopener" class="hover:text-accent-500">LinkedIn</a>
             </div>
 
-            {{-- Per-article AI chat --}}
-            <x-chat-widget :enabled="filled(config('rag.api_key')) && $settings->chatVisible()" :post="$post" />
-
             @if($relatedChallenges->isNotEmpty())
                 <section class="mt-16" aria-labelledby="related-challenges-heading">
                     <h2 id="related-challenges-heading" class="mb-6 text-xl font-bold">Related challenges</h2>
@@ -74,7 +80,7 @@
             @if($related->isNotEmpty())
                 <section class="mt-16">
                     <h2 class="mb-6 text-xl font-bold">Related posts</h2>
-                    <div class="grid gap-5 sm:grid-cols-3">
+                    <div class="grid gap-5 sm:grid-cols-2">
                         @foreach($related as $rel)
                             <x-post-card :post="$rel" />
                         @endforeach
@@ -83,10 +89,10 @@
             @endif
         </article>
 
-        {{-- TOC sidebar --}}
-        <aside class="hidden lg:block">
-            <div class="sticky top-24">
-                <x-toc :items="$toc" />
+        {{-- Chat sidebar (right on xl, floating on smaller screens) --}}
+        <aside class="lg:col-span-2 xl:col-span-1">
+            <div class="xl:sticky xl:top-24">
+                <x-chat-widget :enabled="filled(config('rag.api_key')) && $settings->chatVisible()" :post="$post" />
             </div>
         </aside>
     </div>

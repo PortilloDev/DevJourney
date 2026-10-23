@@ -51,6 +51,7 @@ return [
         'top_k' => (int) env('RAG_TOP_K', 5),
         'min_similarity' => (float) env('RAG_MIN_SIMILARITY', 0.30),
         'related_min_similarity' => (float) env('RAG_RELATED_MIN_SIMILARITY', 0.20),
+        'confident_similarity' => (float) env('RAG_CONFIDENT_SIMILARITY', 0.65),
     ],
 
     /*
@@ -144,7 +145,20 @@ return [
 
     'conversation' => [
         'max_turns' => (int) env('RAG_CONVERSATION_MAX_TURNS', 3),
+        'max_tokens' => (int) env('RAG_CONVERSATION_MAX_TOKENS', 600),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Audit logging
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, ai_usage.prompt stores the full messages sent to the model
+    | (system with context, history and question). Disable it to keep only the
+    | system prompt and question.
+    |
+    */
+    'log_full_prompt' => filter_var(env('RAG_LOG_FULL_PROMPT', true), FILTER_VALIDATE_BOOLEAN),
 
     /*
     |--------------------------------------------------------------------------

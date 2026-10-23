@@ -263,6 +263,46 @@ class PostChatTest extends TestCase
         $this->assertStringContainsString('"truncated":true', $response->streamedContent());
     }
 
+    // R3-E1: NO_ANSWER becomes the predefined refusal and is logged as refused.
+    public function test_no_answer_from_the_model_is_turned_into_a_refusal(): void
+    {
+        $post = $this->postA();
+        app(RagService::class)->indexContent($post);
+
+        $this->llm->content = 'NO_ANSWER';
+
+        $this->postJson('/api/chat', [
+            'question' => 'How does hexagonal architecture isolate the domain?',
+            'post' => 'hexagonal',
+        ])->assertOk()
+            ->assertJsonPath('refused', true)
+            ->assertJsonPath('answer', RagService::UNRELATED_MESSAGE);
+
+        $turn = AiUsage::query()->latest('id')->firstOrFail();
+
+        $this->assertTrue($turn->refused);
+        $this->assertSame('model', $turn->refused_stage);
+    }
+
+    // R3-E2: the sentinel is never shown in the stream; the final event is a refusal.
+    public function test_no_answer_is_suppressed_in_the_stream(): void
+    {
+        $post = $this->postA();
+        app(RagService::class)->indexContent($post);
+
+        $this->llm->content = 'NO_ANSWER';
+
+        $content = $this->postJson('/api/chat', [
+            'question' => 'How does hexagonal architecture isolate the domain?',
+            'post' => 'hexagonal',
+            'stream' => true,
+        ])->assertOk()->streamedContent();
+
+        $this->assertStringNotContainsString('NO_ANSWER', $content);
+        $this->assertStringContainsString(RagService::UNRELATED_MESSAGE, $content);
+        $this->assertStringContainsString('"refused":true', $content);
+    }
+
     // R1 + R2 + R6: every turn is logged with full detail, grouped by the
     // conversation the server issues on the first turn.
     public function test_conversation_turns_are_logged_and_grouped(): void

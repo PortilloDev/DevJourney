@@ -51,7 +51,18 @@ class ViewAiConversation extends ViewRecord
                             ->label('Prompt sent to the LLM')
                             ->placeholder('—')
                             ->copyable()
-                            ->columnSpanFull(),
+                            ->columnSpanFull()
+                            ->state(function (AiUsage $record): ?string {
+                                if (blank($record->prompt)) {
+                                    return null;
+                                }
+
+                                $decoded = json_decode((string) $record->prompt, true);
+
+                                return is_array($decoded)
+                                    ? (string) json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                                    : (string) $record->prompt;
+                            }),
                         Infolists\Components\TextEntry::make('answer')->prose()->placeholder('—')->columnSpanFull(),
                         Infolists\Components\TextEntry::make('sources')
                             ->label('Retrieval')

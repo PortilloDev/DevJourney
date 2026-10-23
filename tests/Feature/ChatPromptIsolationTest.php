@@ -59,6 +59,7 @@ class ChatPromptIsolationTest extends TestCase
         $messages = $this->llm->messages;
 
         $this->assertSame('system', $messages[0]['role']);
+        $this->assertStringContainsString('expert in software development, software design and software architecture', $messages[0]['content']);
         $this->assertStringContainsString('<contexto>', $messages[0]['content']);
         $this->assertStringContainsString('</contexto>', $messages[0]['content']);
         $this->assertStringContainsString('Hexagonal architecture', $messages[0]['content']);

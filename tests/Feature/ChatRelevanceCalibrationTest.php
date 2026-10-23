@@ -119,6 +119,62 @@ class ChatRelevanceCalibrationTest extends TestCase
         $this->assertSame(0, $this->llm->calls);
     }
 
+    // R1-E1: a mixed food question is refused before any model call.
+    public function test_a_mixed_food_question_is_refused_before_any_model_call(): void
+    {
+        $post = $this->createPost('CQRS without event sourcing', 'CQRS separates commands from queries.');
+        $this->point($post, 'p-cqrs', [1.0, 0.0, 0.0]);
+
+        $this->embedding->calls = 0;
+
+        $result = app(RagService::class)->askForPost($post, 'cqrs tortilla patata', '127.0.0.1');
+
+        $this->assertTrue($result['refused']);
+        $this->assertSame(RagService::UNRELATED_MESSAGE, $result['answer']);
+        $this->assertSame(0, $this->embedding->calls);
+        $this->assertSame(0, $this->llm->calls);
+    }
+
+    // R1-E2: half coverage reaches the embedding gate but never the chat model.
+    public function test_a_half_coverage_mixed_question_is_refused_without_the_chat_model(): void
+    {
+        $post = $this->createPost('CQRS without event sourcing', 'CQRS separates commands from queries.');
+        $this->point($post, 'p-cqrs', $this->vectorForScore(0.48));
+
+        $this->embedding->calls = 0;
+
+        $result = app(RagService::class)->askForPost($post, 'hacer una tortilla con cqrs', '127.0.0.1');
+
+        $this->assertTrue($result['refused']);
+        $this->assertSame(RagService::UNRELATED_MESSAGE, $result['answer']);
+        $this->assertGreaterThanOrEqual(1, $this->embedding->calls);
+        $this->assertSame(0, $this->llm->calls);
+    }
+
+    // R1-E3: a generic but on-topic question still passes.
+    public function test_a_generic_cqrs_question_still_passes(): void
+    {
+        $post = $this->createPost('CQRS without event sourcing', 'CQRS separates commands from queries.');
+        $this->point($post, 'p-cqrs', $this->vectorForScore(0.70));
+
+        $result = app(RagService::class)->askForPost($post, 'when is it good practice use CQRS?', '127.0.0.1');
+
+        $this->assertFalse($result['refused']);
+        $this->assertSame(1, $this->llm->calls);
+    }
+
+    // R1-E4: a CQRS/DDD question passes because both terms are in the post.
+    public function test_a_cqrs_ddd_question_passes(): void
+    {
+        $post = $this->createPost('CQRS without event sourcing', 'CQRS separates commands from queries. DDD models the domain.');
+        $this->point($post, 'p-cqrs', $this->vectorForScore(0.60));
+
+        $result = app(RagService::class)->askForPost($post, 'se puede usar cqrs con ddd', '127.0.0.1');
+
+        $this->assertFalse($result['refused']);
+        $this->assertSame(1, $this->llm->calls);
+    }
+
     private function createPost(string $title, string $body): Post
     {
         return Post::factory()->create([

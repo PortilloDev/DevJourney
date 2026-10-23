@@ -67,8 +67,64 @@ class ChatMemoryTest extends TestCase
         ]);
     }
 
+    // R2-E1: a refused turn is not sent to the model as history.
+    public function test_refused_turns_are_excluded_from_the_history(): void
+    {
+        $post = $this->article();
+        app(RagService::class)->indexContent($post);
+        $conversation = $this->conversationWithTurns($post, [
+            ['refused question', RagService::UNRELATED_MESSAGE, true],
+            ['answered question', 'useful answer'],
+        ]);
+
+        app(RagService::class)->askForPost($post, 'How does hexagonal architecture isolate the domain?', '127.0.0.1', null, $conversation->id);
+
+        $contents = array_column($this->llm->lastMessages, 'content');
+
+        $this->assertContains('answered question', $contents);
+        $this->assertNotContains('refused question', $contents);
+    }
+
+    // R4-E1: the history is capped by tokens, dropping the oldest turns first.
+    public function test_history_is_capped_by_tokens(): void
+    {
+        config(['rag.conversation.max_tokens' => 30]);
+
+        $post = $this->article();
+        app(RagService::class)->indexContent($post);
+        $conversation = $this->conversationWithTurns($post, [
+            ['oldest question', str_repeat('long answer ', 40)],
+            ['middle question', str_repeat('long answer ', 40)],
+            ['newest question', str_repeat('long answer ', 40)],
+        ]);
+
+        app(RagService::class)->askForPost($post, 'How does hexagonal architecture isolate the domain?', '127.0.0.1', null, $conversation->id);
+
+        $contents = array_column($this->llm->lastMessages, 'content');
+
+        $this->assertNotContains('oldest question', $contents);
+        $this->assertContains('newest question', $contents);
+    }
+
+    // R5-E2: the stored prompt keeps the history that was sent to the model.
+    public function test_full_prompt_includes_the_history(): void
+    {
+        $post = $this->article();
+        app(RagService::class)->indexContent($post);
+        $conversation = $this->conversationWithTurns($post, [
+            ['previous question', 'previous answer'],
+        ]);
+
+        app(RagService::class)->askForPost($post, 'How does hexagonal architecture isolate the domain?', '127.0.0.1', null, $conversation->id);
+
+        $turn = AiUsage::query()->latest('id')->firstOrFail();
+
+        $this->assertStringContainsString('previous question', (string) $turn->prompt);
+        $this->assertStringContainsString('previous answer', (string) $turn->prompt);
+    }
+
     /**
-     * @param  list<array{0: string, 1: string}>  $turns
+     * @param  list<array{0: string, 1: string, 2?: bool}>  $turns
      */
     private function conversationWithTurns(Post $post, array $turns): AiConversation
     {
@@ -80,15 +136,16 @@ class ChatMemoryTest extends TestCase
             'last_activity_at' => now(),
         ]);
 
-        foreach ($turns as [$question, $answer]) {
+        foreach ($turns as $turn) {
             $this->travel(1)->seconds();
 
             AiUsage::query()->create([
                 'conversation_id' => $conversation->id,
                 'post_id' => $post->getKey(),
                 'ip_address' => '127.0.0.1',
-                'question' => $question,
-                'answer' => $answer,
+                'question' => $turn[0],
+                'answer' => $turn[1],
+                'refused' => $turn[2] ?? false,
                 'model' => 'test',
             ]);
         }
@@ -119,6 +176,37 @@ class ChatMemoryTest extends TestCase
         $turn = AiUsage::query()->latest('id')->first();
         $this->assertSame('¿y eso cómo se prueba?', $turn->question);
         $this->assertSame(MemoryLlm::REWRITTEN, $turn->rewritten_question);
+    }
+
+    // A rewrite that drops the topic's terms must not turn an on-topic follow-up
+    // into an unrelated question: the previous turns keep the relevance context.
+    public function test_a_follow_up_keeps_its_topic_through_the_conversation_history(): void
+    {
+        config(['rag.retrieval.confident_similarity' => 0.65]);
+
+        $post = Post::factory()->create([
+            'slug' => 'ports-adapters-logic',
+            'title' => 'Ports and adapters in a real Laravel codebase',
+            'excerpt' => 'Ports and adapters',
+            'body_md' => '## Intro'.PHP_EOL.'Hexagonal architecture keeps the domain isolated. '
+                .'Ports and adapters separate the domain from the framework and the test suite.',
+        ]);
+
+        app(RagService::class)->indexContent($post);
+
+        $this->llm->rewritten = 'What are the steps to separate the logic in a codebase?';
+
+        $alone = app(RagService::class)->askForPost($post, $this->llm->rewritten, '127.0.0.1');
+        $this->assertTrue($alone['refused']);
+
+        $conversation = $this->conversationWithTurns($post, [
+            ['Can you explain the part about ports?', 'Ports define the operations the application needs; adapters implement them.'],
+        ]);
+
+        $result = app(RagService::class)->askForPost($post, 'How can I separate the logic?', '127.0.0.1', null, $conversation->id);
+
+        $this->assertFalse($result['refused']);
+        $this->assertSame('Concise answer.', $result['answer']);
     }
 
     // R2-E1
@@ -273,6 +361,8 @@ final class MemoryLlm implements LlmClient
 {
     public const REWRITTEN = 'How do you test ports and adapters?';
 
+    public string $rewritten = self::REWRITTEN;
+
     public int $calls = 0;
 
     public int $rewriteCalls = 0;
@@ -300,7 +390,7 @@ final class MemoryLlm implements LlmClient
                 throw new RuntimeException('rewrite provider down');
             }
 
-            return ['content' => self::REWRITTEN, 'tokens_in' => 7, 'tokens_out' => 3, 'model' => $model];
+            return ['content' => $this->rewritten, 'tokens_in' => 7, 'tokens_out' => 3, 'model' => $model];
         }
 
         return ['content' => 'Concise answer.', 'tokens_in' => 12, 'tokens_out' => 4, 'model' => 'memory-llm'];

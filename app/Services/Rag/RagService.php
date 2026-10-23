@@ -48,6 +48,57 @@ class RagService
         'if', 'my', 'we',
     ];
 
+    /**
+     * Generic words and verbs removed before measuring topic coverage. They are
+     * not domain signal: a question made only of these plus one title term is
+     * still about that term.
+     */
+    private const GENERIC_TERMS = [
+        'good', 'better', 'best', 'practice', 'practices', 'use', 'uses', 'using', 'used',
+        'work', 'works', 'working', 'make', 'makes', 'making', 'need', 'needs', 'want',
+        'wants', 'know', 'tell', 'explain', 'explains', 'difference', 'differences',
+        'between', 'example', 'examples', 'benefit', 'benefits', 'advantage', 'advantages',
+        'pros', 'cons', 'really', 'actually', 'possible', 'way', 'ways', 'thing', 'things',
+        'something', 'anything', 'someone', 'people', 'time', 'times',
+        'hacer', 'hace', 'hacen', 'usar', 'usa', 'usan', 'puede', 'pueden', 'podria',
+        'podrian', 'sirve', 'sirven', 'funciona', 'funcionan', 'aplico', 'aplica',
+        'aplican', 'aplicar', 'quiero', 'quiere', 'necesito', 'necesita', 'explicar',
+        'explica', 'diferencia', 'diferencias', 'ejemplo', 'ejemplos', 'ventaja',
+        'ventajas', 'manera', 'forma', 'cosas', 'cosa', 'algo', 'nada', 'gente', 'tiempo',
+        'veces', 'realmente', 'posible', 'mejor', 'bueno', 'buena', 'donde', 'cuando',
+        'cuanto', 'cuanta', 'empiezo', 'empezar', 'empieza', 'comienzo', 'comenzar',
+        'does', 'did', 'ignora', 'ignorar', 'instrucciones', 'instruccion', 'anteriores',
+        'anterior', 'responde', 'responder', 'otra', 'otro',
+    ];
+
+    /**
+     * Backend terms that are on-topic even when the current post does not spell
+     * them out (for example, "python" in a hexagonal-architecture article).
+     */
+    private const DOMAIN_LEXICON = [
+        'php', 'laravel', 'symfony', 'python', 'java', 'javascript', 'typescript', 'node',
+        'go', 'rust', 'ruby', 'sql', 'mysql', 'postgres', 'postgresql', 'sqlite', 'redis',
+        'memcached', 'mongodb', 'docker', 'kubernetes', 'k8s', 'aws', 'azure', 'gcp',
+        'api', 'apis', 'rest', 'graphql', 'http', 'https', 'tcp', 'udp', 'dns', 'git',
+        'linux', 'unix', 'bash', 'testing', 'test', 'tests', 'ddd', 'cqrs', 'hexagonal',
+        'microservices', 'microservice', 'event', 'events', 'sourcing', 'queue', 'queues',
+        'worker', 'workers', 'cache', 'caching', 'index', 'indexes', 'database',
+        'databases', 'transaction', 'transactions', 'observability', 'monitoring',
+        'logging', 'metrics', 'traces', 'ci', 'cd', 'deployment', 'deploy', 'scaling',
+        'autoscaling', 'orchestration', 'overhead', 'tuning', 'idempotency', 'rate',
+        'limiting', 'feed', 'shortener', 'url', 'oauth', 'jwt', 'security', 'performance',
+        'latency', 'throughput', 'consistency', 'availability', 'partition', 'sharding',
+        'replication', 'solid', 'dry', 'kiss', 'yagni', 'refactor', 'refactoring',
+        'design', 'pattern', 'patterns', 'architecture', 'architectures', 'domain',
+        'bounded', 'context', 'aggregate', 'aggregates', 'entity', 'entities', 'value',
+        'object', 'objects', 'repository', 'repositories', 'service', 'services',
+        'controller', 'controllers', 'model', 'models', 'migration', 'migrations',
+        'seeder', 'seeders', 'job', 'jobs', 'command', 'commands', 'listener', 'listeners',
+        'projection', 'projections', 'replay', 'snapshot', 'snapshots', 'outbox', 'saga',
+        'sagas', 'ports', 'adapters', 'dip', 'srp', 'ocp', 'lsp', 'isp', 'isolate',
+        'isolates', 'isolation',
+    ];
+
     private string $collection;
 
     private int $topK;
@@ -56,9 +107,13 @@ class RagService
 
     private float $relatedMinSimilarity;
 
+    private float $confidentSimilarity;
+
     private int $contextChunks;
 
     private int $maxInputTokens;
+
+    private int $conversationMaxTokens;
 
     private int $postMaxAnswerTokens;
 
@@ -80,8 +135,10 @@ class RagService
         $this->topK = (int) config('rag.retrieval.top_k', 5);
         $this->minSimilarity = (float) config('rag.retrieval.min_similarity');
         $this->relatedMinSimilarity = (float) config('rag.retrieval.related_min_similarity');
+        $this->confidentSimilarity = (float) config('rag.retrieval.confident_similarity');
         $this->contextChunks = (int) config('rag.limits.max_context_chunks', 5);
         $this->maxInputTokens = (int) config('rag.limits.max_input_tokens', 2000);
+        $this->conversationMaxTokens = (int) config('rag.conversation.max_tokens', 600);
         $this->postMaxAnswerTokens = (int) config('rag.post_chat.max_answer_tokens', 200);
         $this->generalMaxAnswerTokens = (int) config('rag.general_chat.max_answer_tokens', 400);
         $this->relatedThreshold = (float) config('rag.post_chat.related_threshold');
@@ -192,7 +249,7 @@ class RagService
     {
         $question = trim($question);
         $history = $this->conversationHistory($conversationId);
-        $rewrite = $this->rewriteQuestion($history, $question);
+        $rewrite = $this->rewriteQuestion($history, $question, (string) $post->title);
         $effective = $rewrite['question'];
         $rewriteTokens = $rewrite['tokens_in'] + $rewrite['tokens_out'];
         $rewritten = $rewrite['rewritten'] ? $effective : null;
@@ -210,11 +267,17 @@ class RagService
             }
         }
 
-        $context = $this->resolvePostContext($post, $effective);
+        $context = $this->resolvePostContext(
+            $post,
+            $effective,
+            $this->contextBudget($this->postChatPrompt(), $effective, $history),
+            $history,
+        );
 
         if ($context['refused']) {
             $usage = $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
                 'rewritten_question' => $rewritten,
+                'prompt' => $this->promptForAudit($this->storedPrompt($effective, $history), $effective),
             ]));
 
             return $this->refusedResult($usage?->getKey());
@@ -234,17 +297,20 @@ class RagService
                 $question,
                 extra: $this->observability($post, $conversationId, 'error', [
                     'rewritten_question' => $rewritten,
-                    'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
+                    'prompt' => $this->promptForAudit($messages, $effective),
                 ]),
             );
 
             throw $e;
         }
 
-        $truncated = ($result['finish_reason'] ?? null) === 'length';
-        $answer = $truncated ? $this->trimToLastSentence($result['content']) : $result['content'];
+        $noAnswer = str_starts_with(trim($result['content']), 'NO_ANSWER');
+        $truncated = ! $noAnswer && ($result['finish_reason'] ?? null) === 'length';
+        $answer = $noAnswer
+            ? self::UNRELATED_MESSAGE
+            : ($truncated ? $this->trimToLastSentence($result['content']) : $result['content']);
 
-        if ($cacheable) {
+        if ($cacheable && ! $noAnswer) {
             $this->answers->put($postId, $effective, [
                 'answer' => $answer,
                 'sources' => $context['sources'],
@@ -256,16 +322,33 @@ class RagService
             $ip,
             $userId,
             $question,
+            refused: $noAnswer,
             tokensIn: $result['tokens_in'] + $rewriteTokens,
             tokensOut: $result['tokens_out'],
             chunks: $context['chunks'],
             sources: $context['sources'],
-            extra: $this->observability($post, $conversationId, null, [
+            extra: $this->observability($post, $conversationId, $noAnswer ? 'model' : null, [
                 'rewritten_question' => $rewritten,
-                'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
+                'prompt' => $this->promptForAudit($messages, $effective),
                 'answer' => $answer,
             ]),
         );
+
+        if ($noAnswer) {
+            return [
+                'answer' => self::UNRELATED_MESSAGE,
+                'refused' => true,
+                'sources' => [],
+                'context' => '',
+                'tokens_in' => $result['tokens_in'] + $rewriteTokens,
+                'tokens_out' => $result['tokens_out'],
+                'context_chunks' => $context['chunks'],
+                'model' => $result['model'],
+                'truncated' => false,
+                'related' => [],
+                'usage_id' => $usage?->getKey(),
+            ];
+        }
 
         return [
             'answer' => $answer,
@@ -291,7 +374,7 @@ class RagService
     {
         $question = trim($question);
         $history = $this->conversationHistory($conversationId);
-        $rewrite = $this->rewriteQuestion($history, $question);
+        $rewrite = $this->rewriteQuestion($history, $question, (string) $post->title);
         $effective = $rewrite['question'];
         $rewriteTokens = $rewrite['tokens_in'] + $rewrite['tokens_out'];
         $rewritten = $rewrite['rewritten'] ? $effective : null;
@@ -308,12 +391,18 @@ class RagService
             }
         }
 
-        $context = $this->resolvePostContext($post, $effective);
+        $context = $this->resolvePostContext(
+            $post,
+            $effective,
+            $this->contextBudget($this->postChatPrompt(), $effective, $history),
+            $history,
+        );
 
         if ($context['refused']) {
             $onDelta(self::UNRELATED_MESSAGE);
             $usage = $this->recordUsage($ip, $userId, $question, refused: true, extra: $this->observability($post, $conversationId, $context['stage'], [
                 'rewritten_question' => $rewritten,
+                'prompt' => $this->promptForAudit($this->storedPrompt($effective, $history), $effective),
             ]));
 
             return $this->refusedStreamResult($usage?->getKey());
@@ -323,8 +412,30 @@ class RagService
 
         $this->reserveQuota($ip);
 
+        // Suppress a leading NO_ANSWER so the sentinel never reaches the widget.
+        $buffer = '';
+        $suppressed = false;
+        $emit = function (string $delta) use (&$buffer, &$suppressed, $onDelta): void {
+            if ($suppressed) {
+                return;
+            }
+
+            $buffer .= $delta;
+
+            if (str_starts_with($buffer, 'NO_ANSWER')) {
+                $suppressed = true;
+
+                return;
+            }
+
+            if (strlen($buffer) >= strlen('NO_ANSWER') || ! str_starts_with('NO_ANSWER', $buffer)) {
+                $onDelta($buffer);
+                $buffer = '';
+            }
+        };
+
         try {
-            $result = $this->llm->stream($messages, $onDelta, $this->postMaxAnswerTokens);
+            $result = $this->llm->stream($messages, $emit, $this->postMaxAnswerTokens);
         } catch (\Throwable $e) {
             // A stream cut mid-flight must still leave a trace (R2, D4).
             $this->recordUsage(
@@ -333,14 +444,22 @@ class RagService
                 $question,
                 extra: $this->observability($post, $conversationId, 'error', [
                     'rewritten_question' => $rewritten,
-                    'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
+                    'prompt' => $this->promptForAudit($messages, $effective),
                 ]),
             );
 
             throw $e;
         }
 
-        if ($cacheable) {
+        $noAnswer = str_starts_with(trim($result['content']), 'NO_ANSWER');
+
+        if ($noAnswer) {
+            $onDelta(self::UNRELATED_MESSAGE);
+        } elseif ($buffer !== '' && ! $suppressed) {
+            $onDelta($buffer);
+        }
+
+        if ($cacheable && ! $noAnswer) {
             $this->answers->put($postId, $effective, [
                 'answer' => $result['content'],
                 'sources' => $context['sources'],
@@ -352,16 +471,31 @@ class RagService
             $ip,
             $userId,
             $question,
+            refused: $noAnswer,
             tokensIn: $result['tokens_in'] + $rewriteTokens,
             tokensOut: $result['tokens_out'],
             chunks: $context['chunks'],
             sources: $context['sources'],
-            extra: $this->observability($post, $conversationId, null, [
+            extra: $this->observability($post, $conversationId, $noAnswer ? 'model' : null, [
                 'rewritten_question' => $rewritten,
-                'prompt' => (string) json_encode($this->storedPrompt($effective), JSON_UNESCAPED_UNICODE),
-                'answer' => $result['content'],
+                'prompt' => $this->promptForAudit($messages, $effective),
+                'answer' => $noAnswer ? self::UNRELATED_MESSAGE : $result['content'],
             ]),
         );
+
+        if ($noAnswer) {
+            return [
+                'refused' => true,
+                'sources' => [],
+                'tokens_in' => $result['tokens_in'] + $rewriteTokens,
+                'tokens_out' => $result['tokens_out'],
+                'context_chunks' => $context['chunks'],
+                'model' => $result['model'],
+                'truncated' => false,
+                'related' => [],
+                'usage_id' => $usage?->getKey(),
+            ];
+        }
 
         return [
             'refused' => false,
@@ -395,9 +529,9 @@ class RagService
     }
 
     /**
-     * The last turns of the conversation, oldest first, capped at
-     * `rag.conversation.max_turns` (R3). Only complete turns (with an answer)
-     * form the history sent to the model.
+     * The last turns of the conversation, oldest first, capped by
+     * `rag.conversation.max_turns` and `rag.conversation.max_tokens` (R3, R4).
+     * Refused and no-answer turns are excluded (R2).
      *
      * @return list<array{question: string, answer: string}>
      */
@@ -415,12 +549,17 @@ class RagService
 
         $max = max(0, (int) config('rag.conversation.max_turns', 3));
 
-        return $conversation->turns()
+        if ($max === 0) {
+            return [];
+        }
+
+        $turns = $conversation->turns()
             ->whereNotNull('answer')
+            ->where('refused', false)
             ->reorder()
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->limit($max)
+            ->limit($max * 3)
             ->get()
             ->reverse()
             ->values()
@@ -428,7 +567,88 @@ class RagService
                 'question' => (string) $turn->question,
                 'answer' => (string) $turn->answer,
             ])
-            ->all();
+            ->reject(fn (array $turn): bool => $this->isNoAnswer($turn['answer']))
+            ->take(-$max)
+            ->values();
+
+        // Token budget: drop the oldest turns until the history fits (R4).
+        while ($turns->count() > 1 && $this->historyTokens($turns->all()) > $this->conversationMaxTokens) {
+            $turns->shift();
+        }
+
+        return $turns->values()->all();
+    }
+
+    /**
+     * The prior turns as plain text, used for the lexical relevance gates so a
+     * follow-up keeps the topic of the conversation even when the rewrite
+     * generalises it.
+     *
+     * @param  list<array{question: string, answer: string}>  $history
+     */
+    private function historyText(array $history): string
+    {
+        if ($history === []) {
+            return '';
+        }
+
+        return implode(' ', array_map(
+            fn (array $turn): string => $turn['question'].' '.$turn['answer'],
+            $history,
+        ));
+    }
+
+    /**
+     * @param  list<array{question: string, answer: string}>  $history
+     */
+    private function withHistory(string $question, array $history): string
+    {
+        $historyText = $this->historyText($history);
+
+        return $historyText === '' ? $question : $question.' '.$historyText;
+    }
+
+    /**
+     * @param  list<array{question: string, answer: string}>  $turns
+     */
+    private function historyTokens(array $turns): int
+    {
+        $total = 0;
+
+        foreach ($turns as $turn) {
+            $total += $this->estimateTokens($turn['question']) + $this->estimateTokens($turn['answer']);
+        }
+
+        return $total;
+    }
+
+    /**
+     * Budget left for retrieved chunks after the system prompt, the question and
+     * the history. The wrapper adds a fixed allowance for the context tags and
+     * the "data, not instructions" sentence.
+     *
+     * @param  list<array{question: string, answer: string}>  $history
+     */
+    private function contextBudget(string $system, string $question, array $history): int
+    {
+        $overhead = $this->estimateTokens($system)
+            + $this->estimateTokens($question)
+            + $this->historyTokens($history)
+            + 100;
+
+        return max(200, $this->maxInputTokens - $overhead);
+    }
+
+    private function isNoAnswer(string $answer): bool
+    {
+        $normalized = Str::lower(trim($answer));
+
+        return $normalized === ''
+            || $normalized === 'no_answer'
+            || in_array($normalized, [
+                'i do not know', 'i do not know.', "i don't know", "i don't know.",
+                'no lo sé', 'no lo sé.', 'no sé', 'no sé.',
+            ], true);
     }
 
     /**
@@ -439,13 +659,13 @@ class RagService
      * @param  list<array{question: string, answer: string}>  $history
      * @return array{question: string, tokens_in: int, tokens_out: int, rewritten: bool}
      */
-    private function rewriteQuestion(array $history, string $question): array
+    private function rewriteQuestion(array $history, string $question, ?string $topic = null): array
     {
         if ($history === []) {
             return ['question' => $question, 'tokens_in' => 0, 'tokens_out' => 0, 'rewritten' => false];
         }
 
-        $messages = [['role' => 'system', 'content' => $this->rewritePrompt()]];
+        $messages = [['role' => 'system', 'content' => $this->rewritePrompt($topic)]];
 
         foreach ($history as $turn) {
             $messages[] = ['role' => 'user', 'content' => $turn['question']];
@@ -486,11 +706,18 @@ class RagService
         return is_string($model) && $model !== '' ? $model : null;
     }
 
-    private function rewritePrompt(): string
+    private function rewritePrompt(?string $topic = null): string
     {
-        return 'You rewrite a follow-up question into a standalone question. Use the previous '
-            .'conversation to resolve pronouns, references and ellipsis, keep the original language '
-            .'and intent, and add no new information. Return only the rewritten question.';
+        $prompt = 'You rewrite a follow-up question into a standalone question. ';
+
+        if ($topic !== null && trim($topic) !== '') {
+            $prompt .= 'The conversation is about the article "'.trim($topic).'". ';
+        }
+
+        return $prompt.'Use the previous conversation to resolve pronouns, references and ellipsis, '
+            .'keep the original language and intent, keep the technical terms and subject of the '
+            .'exchange instead of replacing them with generic words, and add no new information. '
+            .'Return only the rewritten question.';
     }
 
     /**
@@ -564,18 +791,36 @@ class RagService
     }
 
     /**
-     * The prompt recorded for audit: system + question only. The retrieved
-     * context (and the history) is reconstructed from the turn's `sources`
-     * (point ids) and the sibling turns, so it is not stored a second time.
+     * The prompt recorded when full logging is disabled or before the context is
+     * built (local refusals): system + history + question, without context.
      *
+     * @param  list<array{question: string, answer: string}>  $history
      * @return list<array{role: string, content: string}>
      */
-    private function storedPrompt(string $question): array
+    private function storedPrompt(string $question, array $history = []): array
     {
-        return [
-            ['role' => 'system', 'content' => $this->postChatPrompt()],
-            ['role' => 'user', 'content' => $question],
-        ];
+        $messages = [['role' => 'system', 'content' => $this->postChatPrompt()]];
+
+        foreach ($history as $turn) {
+            $messages[] = ['role' => 'user', 'content' => $turn['question']];
+            $messages[] = ['role' => 'assistant', 'content' => $turn['answer']];
+        }
+
+        $messages[] = ['role' => 'user', 'content' => $question];
+
+        return $messages;
+    }
+
+    /**
+     * @param  list<array{role: string, content: string}>  $messages
+     */
+    private function promptForAudit(array $messages, string $question): string
+    {
+        $payload = config('rag.log_full_prompt', true)
+            ? $messages
+            : $this->storedPrompt($question);
+
+        return (string) json_encode($payload, JSON_UNESCAPED_UNICODE);
     }
 
     /**
@@ -678,12 +923,18 @@ class RagService
      * check short-circuits clearly unrelated questions without any external
      * call; otherwise the embedding provider decides.
      *
+     * The previous turns are part of the relevance judgement: a follow-up such as
+     * "How can I separate the logic?" depends on the prior exchange to be
+     * understood, and the rewrite may lose the topic's terms.
+     *
+     * @param  list<array{question: string, answer: string}>  $history
      * @return array{refused: bool, context: string, chunks: int, sources: list<array<string, mixed>>, stage: string|null}
      */
-    private function resolvePostContext(Post $post, string $question): array
+    private function resolvePostContext(Post $post, string $question, ?int $contextBudget = null, array $history = []): array
     {
         $questionTokens = $this->contentTokens($question);
-        $overlap = $this->lexicalOverlap($question, $this->postText($post));
+        $historyText = $this->historyText($history);
+        $overlap = $this->lexicalOverlap($this->withHistory($question, $history), $this->postText($post));
 
         // Sharing a distinctive term with the article title is a strong signal of
         // relevance (e.g. the question says "hexagonal" / "laravel"). This also
@@ -691,12 +942,29 @@ class RagService
         $sharesTitleTerm = $questionTokens !== []
             && array_intersect($questionTokens, $this->contentTokens((string) $post->title)) !== [];
 
+        // A conversation already anchored to the article (a previous turn names
+        // one of its title terms) makes its follow-ups topic-safe by inheritance:
+        // the rewrite may drop the terms, but the exchange still knows them.
+        $historyAnchored = $historyText !== ''
+            && array_intersect($this->contentTokens($historyText), $this->contentTokens((string) $post->title)) !== [];
+
+        $applyCoverageGate = $sharesTitleTerm && ! $historyAnchored;
+
         // Stage 1: a clearly unrelated question is refused with no external call.
-        if ($questionTokens !== [] && $overlap <= $this->unrelatedThreshold && ! $sharesTitleTerm) {
+        if ($questionTokens !== [] && $overlap <= $this->unrelatedThreshold && ! $sharesTitleTerm && ! $historyAnchored) {
             return $this->refusedContext('local');
         }
 
-        $clearlyRelated = $sharesTitleTerm || $overlap >= $this->relatedThreshold;
+        $coverage = $applyCoverageGate ? $this->coverage($question, $post) : 1.0;
+
+        // A title term alone is not enough when the question is mostly made of
+        // words the post does not cover (e.g. "cqrs tortilla patata"). Very low
+        // coverage is refused before spending an embedding call (R1).
+        if ($applyCoverageGate && $coverage <= 0.34) {
+            return $this->refusedContext('topic');
+        }
+
+        $clearlyRelated = $sharesTitleTerm || $historyAnchored || $overlap >= $this->relatedThreshold;
 
         // The descriptive term no longer bypasses the semantic floor: it selects
         // the permissive threshold instead, and the score check always runs (D3).
@@ -710,11 +978,20 @@ class RagService
             return $this->refusedContext('embedding');
         }
 
+        // Mixed questions with low coverage are refused unless the semantic
+        // match is strong enough to trust it over the missing vocabulary (R1).
+        if ($applyCoverageGate && $coverage <= 0.5 && $this->bestScore($hits) < $this->confidentSimilarity) {
+            return $this->refusedContext('topic');
+        }
+
         if ($this->bestScore($hits) < $threshold) {
             return $this->refusedContext('embedding');
         }
 
-        $used = $this->trimToInputBudget(array_slice($hits, 0, $this->contextChunks), $this->maxInputTokens);
+        $used = $this->trimToInputBudget(
+            array_slice($hits, 0, $this->contextChunks),
+            $contextBudget ?? $this->maxInputTokens,
+        );
 
         return [
             'refused' => false,
@@ -723,6 +1000,30 @@ class RagService
             'sources' => $this->sources($used),
             'stage' => null,
         ];
+    }
+
+    /**
+     * Fraction of the question's content tokens that the post covers, either
+     * through its own vocabulary (title, excerpt, body, tags) or the domain
+     * lexicon. Generic words are ignored so a question made of "how to use X"
+     * does not look off-topic.
+     */
+    private function coverage(string $question, Post $post): float
+    {
+        $questionTokens = array_values(array_diff($this->contentTokens($question), self::GENERIC_TERMS));
+
+        if ($questionTokens === []) {
+            return 1.0;
+        }
+
+        $postTokens = array_merge(
+            $this->contentTokens($this->postText($post)),
+            $this->contentTokens($post->tags->pluck('name')->implode(' ')),
+        );
+
+        $known = array_intersect($questionTokens, array_merge($postTokens, self::DOMAIN_LEXICON));
+
+        return count($known) / count($questionTokens);
     }
 
     /**
@@ -772,11 +1073,12 @@ class RagService
 
     private function postChatPrompt(): string
     {
-        return 'You are the assistant for ONE DevJourney journal article. Answer ONLY using the '
+        return 'You are an expert in software development, software design and software architecture. '
+            .'You are the assistant for ONE DevJourney journal article. Answer ONLY using the '
             .'provided context about this article. Be concise: a single short paragraph, at most the '
             .'length of two or three tweets (roughly 60 words). Return only the most important '
-            .'information needed to answer. If the context does not contain the answer, say you do not '
-            .'know. Never use information from other posts.';
+            .'information needed to answer. Always answer in English. If the context does not contain '
+            .'the answer, reply with exactly NO_ANSWER and nothing else. Never use information from other posts.';
     }
 
     /**
@@ -985,11 +1287,12 @@ class RagService
 
     private function systemPrompt(): string
     {
-        return 'You are the DevJourney assistant. You help people learn from the author\'s blog posts, '
+        return 'You are an expert in software development, software design and software architecture. '
+            .'You are the DevJourney assistant. You help people learn from the author\'s blog posts, '
             .'solved technical challenges, projects and reference documents. Answer ONLY using the '
-            .'provided context. If the context does not contain the answer, say clearly that you do not '
-            .'know and suggest checking the journal. Keep answers concise and cite the source title when '
-            .'possible. Never answer about topics unrelated to the provided context.';
+            .'provided context. Always answer in English. If the context does not contain the answer, say '
+            .'clearly that you do not know and suggest checking the journal. Keep answers concise and cite '
+            .'the source title when possible. Never answer about topics unrelated to the provided context.';
     }
 
     /**

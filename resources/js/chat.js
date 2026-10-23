@@ -17,6 +17,7 @@ export function chatWidget(slug) {
         error: null,
         loading: false,
         copiedIndex: null,
+        open: false,
 
         init() {
             try {
@@ -28,7 +29,7 @@ export function chatWidget(slug) {
             } catch (e) {
                 this.messages = [];
             }
-            this.$nextTick(() => this.scrollToBottom());
+            this.$nextTick(() => this.scrollToBottom(true));
         },
 
         persist() {
@@ -55,6 +56,7 @@ export function chatWidget(slug) {
             this.messages.push({ role: 'assistant', text: '', sources: [], related: [], refused: false, incomplete: false, truncated: false });
             const index = this.messages.length - 1;
             this.persist();
+            this.$nextTick(() => this.scrollToBottom(true));
 
             try {
                 const res = await fetch('/api/chat', {
@@ -128,6 +130,7 @@ export function chatWidget(slug) {
 
             if (event.delta) {
                 this.messages[index].text += event.delta;
+                this.$nextTick(() => this.scrollToBottom());
             }
 
             if (event.error) {
@@ -136,7 +139,19 @@ export function chatWidget(slug) {
             }
 
             if (event.done) {
-                this.messages[index].sources = event.sources || [];
+                const seen = new Set();
+
+                this.messages[index].sources = (event.sources || []).filter((source) => {
+                    const key = source.url || source.title || '';
+
+                    if (seen.has(key)) {
+                        return false;
+                    }
+
+                    seen.add(key);
+
+                    return true;
+                });
                 this.messages[index].related = event.related || [];
                 this.messages[index].refused = !!event.refused;
                 this.messages[index].incomplete = !!event.incomplete;
@@ -202,8 +217,28 @@ export function chatWidget(slug) {
             return Array.isArray(message.sources) && message.sources.some((s) => s.url);
         },
 
-        scrollToBottom() {
-            this.$refs.output?.scrollTo({ top: this.$refs.output.scrollHeight, behavior: 'smooth' });
+        toggle() {
+            this.open = !this.open;
+
+            if (this.open) {
+                this.$nextTick(() => this.scrollToBottom(true));
+            }
+        },
+
+        scrollToBottom(force = false) {
+            const el = this.$refs.output;
+
+            if (!el) {
+                return;
+            }
+
+            const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+
+            if (!force && !nearBottom) {
+                return;
+            }
+
+            el.scrollTop = el.scrollHeight;
         },
     };
 }

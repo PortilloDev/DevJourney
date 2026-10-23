@@ -121,8 +121,8 @@ class ChatPrivacyTest extends TestCase
         $this->assertEmpty($this->searchForDocument($document->id));
     }
 
-    // R4-E1: sources carry the point id and the stored prompt omits the context.
-    public function test_sources_include_point_id_and_prompt_omits_context(): void
+    // R5-E1: sources carry the point id and the full prompt includes the context.
+    public function test_sources_include_point_id_and_prompt_includes_context(): void
     {
         $post = $this->publishedPost();
         app(RagService::class)->indexContent($post);
@@ -135,7 +135,7 @@ class ChatPrivacyTest extends TestCase
         $this->assertArrayHasKey('point_id', $turn->retrievedSources()[0]);
         $this->assertNotEmpty($turn->retrievedSources()[0]['point_id']);
 
-        $this->assertStringNotContainsString('UNIQUE_CONTEXT_MARKER', (string) $turn->prompt);
+        $this->assertStringContainsString('UNIQUE_CONTEXT_MARKER', (string) $turn->prompt);
     }
 
     /**
