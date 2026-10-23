@@ -226,6 +226,43 @@ class PostChatTest extends TestCase
         $this->assertStringContainsString('data: [DONE]', $content);
     }
 
+    // D7 (R3-E1): the JSON response exposes the truncation mark and the answer
+    // reaches the visitor cut at the last full sentence.
+    public function test_json_response_flags_a_truncated_answer(): void
+    {
+        $post = $this->postA();
+        app(RagService::class)->indexContent($post);
+
+        $this->llm->finishReason = 'length';
+        $this->llm->content = 'First sentence. Second sentence. Third cut off mid';
+
+        $this->postJson('/api/chat', [
+            'question' => 'How does hexagonal architecture isolate the domain?',
+            'post' => 'hexagonal',
+        ])->assertOk()
+            ->assertJsonPath('truncated', true)
+            ->assertJsonPath('answer', 'First sentence. Second sentence.');
+    }
+
+    // D7 (R3-E1): the final SSE event carries the truncation mark.
+    public function test_sse_final_event_flags_a_truncated_answer(): void
+    {
+        $post = $this->postA();
+        app(RagService::class)->indexContent($post);
+
+        $this->llm->finishReason = 'length';
+        $this->llm->content = 'First sentence. Second cut';
+
+        $response = $this->postJson('/api/chat', [
+            'question' => 'How does hexagonal architecture isolate the domain?',
+            'post' => 'hexagonal',
+            'stream' => true,
+        ]);
+
+        $response->assertOk();
+        $this->assertStringContainsString('"truncated":true', $response->streamedContent());
+    }
+
     // R1 + R2 + R6: every turn is logged with full detail, grouped by the
     // conversation the server issues on the first turn.
     public function test_conversation_turns_are_logged_and_grouped(): void
@@ -381,13 +418,17 @@ final class SpyLlm implements LlmClient
 
     public ?int $lastMaxTokens = null;
 
+    public string $content = 'Concise answer.';
+
+    public ?string $finishReason = null;
+
     public function complete(array $messages, ?int $maxTokens = null, ?string $model = null, ?float $temperature = null): array
     {
         $this->calls++;
         $this->lastMessages = $messages;
         $this->lastMaxTokens = $maxTokens;
 
-        return ['content' => 'Concise answer.', 'tokens_in' => 12, 'tokens_out' => 4, 'model' => 'spy'];
+        return ['content' => $this->content, 'tokens_in' => 12, 'tokens_out' => 4, 'model' => 'spy', 'finish_reason' => $this->finishReason];
     }
 
     public function stream(array $messages, callable $onDelta, ?int $maxTokens = null, ?string $model = null): array
@@ -395,8 +436,8 @@ final class SpyLlm implements LlmClient
         $this->calls++;
         $this->lastMessages = $messages;
         $this->lastMaxTokens = $maxTokens;
-        $onDelta('Concise answer.');
+        $onDelta($this->content);
 
-        return ['content' => 'Concise answer.', 'tokens_in' => 12, 'tokens_out' => 4, 'model' => 'spy'];
+        return ['content' => $this->content, 'tokens_in' => 12, 'tokens_out' => 4, 'model' => 'spy', 'finish_reason' => $this->finishReason];
     }
 }

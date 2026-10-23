@@ -1,6 +1,6 @@
 ---
 feature: chat-prompt-aislado
-estado: aprobada
+estado: implementada
 creada: 2026-10-08
 aprobada: 2026-10-21
 ---

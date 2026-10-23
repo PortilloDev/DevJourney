@@ -7,6 +7,7 @@ namespace App\Filament\Resources;
 use App\Enums\EnglishLevel;
 use App\Enums\PostStatus;
 use App\Filament\Resources\PostResource\Pages;
+use App\Filament\Resources\PostResource\RelationManagers\ChallengesRelationManager;
 use App\Models\Post;
 use App\Services\SiteSettingService;
 use Filament\Forms;
@@ -176,6 +177,13 @@ class PostResource extends Resource
             'index' => Pages\ListPosts::route('/'),
             'create' => Pages\CreatePost::route('/create'),
             'edit' => Pages\EditPost::route('/{record}/edit'),
+        ];
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            ChallengesRelationManager::class,
         ];
     }
 }

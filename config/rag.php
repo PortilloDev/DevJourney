@@ -50,6 +50,7 @@ return [
     'retrieval' => [
         'top_k' => (int) env('RAG_TOP_K', 5),
         'min_similarity' => (float) env('RAG_MIN_SIMILARITY', 0.30),
+        'related_min_similarity' => (float) env('RAG_RELATED_MIN_SIMILARITY', 0.20),
     ],
 
     /*
@@ -115,6 +116,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Generic chat
+    |--------------------------------------------------------------------------
+    |
+    | Output cap for the generic `ask()`/`askStream()` path, kept separate from
+    | the per-post chat cap and from the input token limit.
+    |
+    */
+    'general_chat' => [
+        'max_answer_tokens' => (int) env('RAG_GENERAL_MAX_ANSWER_TOKENS', 400),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Conversational memory
     |--------------------------------------------------------------------------
     |
@@ -166,6 +180,12 @@ return [
     |--------------------------------------------------------------------------
     */
     'indexing' => [
+        // Content types that receive embeddings. Keep this list aligned with
+        // the retrieval paths: a type no path can reach only costs money.
+        'source_types' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('RAG_INDEXING_SOURCE_TYPES', 'post,document')),
+        ))),
         'chunk_size' => (int) env('RAG_CHUNK_SIZE', 900),
         'chunk_overlap' => (int) env('RAG_CHUNK_OVERLAP', 120),
     ],

@@ -29,6 +29,7 @@ class DatabaseSeeder extends Seeder
         $categories = $this->seedCategories();
         $tags = $this->seedTags();
         $this->seedPosts($categories, $tags);
+        $this->call(LongFormPostSeeder::class);
         $this->seedChallenges($tags);
         $this->seedProjects();
         $this->seedMilestones();

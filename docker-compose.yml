@@ -31,6 +31,8 @@ services:
       CACHE_STORE: redis
       SESSION_DRIVER: redis
       QUEUE_CONNECTION: redis
+      # Keep above the queue worker --timeout (300s) to avoid duplicate jobs.
+      REDIS_QUEUE_RETRY_AFTER: 360
       REDIS_HOST: redis
       SCOUT_DRIVER: meilisearch
       MEILISEARCH_HOST: http://meilisearch:7700

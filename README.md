@@ -164,12 +164,27 @@ resources/views/
   `RAG_EVAL_JUDGE_MODEL` y `--min=0.8` (o `RAG_EVAL_MIN_SCORE`) para que devuelva
   un código de salida distinto de cero si la tasa de acierto baja del umbral. No
   registra turnos en el histórico ni usa la caché de respuestas.
+- **Workers y scheduler.** La imagen arranca `php-fpm`, `nginx`, dos
+  `queue:work` y `schedule:work` bajo supervisor
+  (`docker-fpm-setup/supervisord.conf`). Supervisor relanza cada proceso si cae
+  (`autorestart=true`), así que no necesitas cron del host. Los jobs
+  (`IndexContentJob`, `IndexDocumentJob`) y `ai:prune-conversations` dependen de
+  estos procesos: sin ellos, los jobs se acumulan en Redis y el prune no corre.
+  Cambiar el código exige `php artisan queue:restart`; `deploy.sh` ya lo hace.
 - Tras desplegar, ejecuta:
   ```bash
   php artisan migrate --force      # nuevas tablas
+  php artisan storage:link         # imágenes destacadas / media
   php artisan optimize:clear       # caché de páginas/assets
-  # reindexar contenido y documentos para el RAG
+  php artisan queue:restart        # recarga el código en los workers
+  # opcional: reconstruir el índice vectorial completo
+  php artisan rag:reindex --type=post --type=document
+  # one-off de la spec chat-retos-relacionados:
+  php artisan rag:prune-challenge-vectors
   ```
+  `deploy.sh` automatiza migraciones, `storage:link`, `optimize:clear` y
+  `queue:restart`. `rag:reindex` respeta `RAG_INDEXING_SOURCE_TYPES` (sin
+  `--type` reindexa los tipos configurados) y gasta embeddings reales.
 - **No** hagas `php artisan config:cache` en la build: el `.env` se monta en
   runtime y una caché de build lo ignoraría.
 - **Rotar `APP_KEY`** invalida la derivación de las IPs del chat (HMAC con la

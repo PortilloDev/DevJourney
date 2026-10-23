@@ -52,7 +52,7 @@ export function chatWidget(slug) {
             this.loading = true;
             this.question = '';
             this.messages.push({ role: 'user', text: q });
-            this.messages.push({ role: 'assistant', text: '', sources: [], refused: false, incomplete: false });
+            this.messages.push({ role: 'assistant', text: '', sources: [], related: [], refused: false, incomplete: false, truncated: false });
             const index = this.messages.length - 1;
             this.persist();
 
@@ -137,8 +137,10 @@ export function chatWidget(slug) {
 
             if (event.done) {
                 this.messages[index].sources = event.sources || [];
+                this.messages[index].related = event.related || [];
                 this.messages[index].refused = !!event.refused;
                 this.messages[index].incomplete = !!event.incomplete;
+                this.messages[index].truncated = !!event.truncated;
                 this.messages[index].usageId = event.usage_id ?? null;
                 if (event.conversation_token) {
                     this.conversationToken = event.conversation_token;

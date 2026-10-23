@@ -64,9 +64,15 @@ class PostController extends Controller
             ->limit(3)
             ->get();
 
+        $relatedChallenges = $post->challenges()
+            ->published()
+            ->orderBy('title')
+            ->get();
+
         return view('public.posts.show', [
             'post' => $post,
             'related' => $related,
+            'relatedChallenges' => $relatedChallenges,
             'toc' => $post->tableOfContents(),
         ]);
     }

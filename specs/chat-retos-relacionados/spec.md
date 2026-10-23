@@ -1,8 +1,8 @@
 ---
 feature: chat-retos-relacionados
-estado: borrador
+estado: implementada
 creada: 2026-10-08
-aprobada:
+aprobada: 2026-10-22
 ---
 
 # Retos relacionados con cada post

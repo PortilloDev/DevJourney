@@ -89,6 +89,7 @@ class OpenAiLlmClient implements LlmClient
         $tokensIn = 0;
         $tokensOut = 0;
         $usage = null;
+        $finishReason = null;
 
         $stream = $response->toPsrResponse()->getBody();
         $buffer = '';
@@ -120,6 +121,8 @@ class OpenAiLlmClient implements LlmClient
                     continue;
                 }
 
+                $finishReason = $decoded['choices'][0]['finish_reason'] ?? $finishReason;
+
                 $delta = $decoded['choices'][0]['delta']['content'] ?? null;
                 if (is_string($delta) && $delta !== '') {
                     $content .= $delta;
@@ -132,7 +135,7 @@ class OpenAiLlmClient implements LlmClient
         $tokensOut = (int) ($usage['completion_tokens'] ?? $this->estimateTokens($content));
 
         return static::result([
-            'choices' => [['message' => ['content' => $content]]],
+            'choices' => [['message' => ['content' => $content], 'finish_reason' => $finishReason]],
             'usage' => ['prompt_tokens' => $tokensIn, 'completion_tokens' => $tokensOut],
             'model' => $model,
         ], $model);
@@ -198,7 +201,7 @@ class OpenAiLlmClient implements LlmClient
 
     /**
      * @param  array<string, mixed>  $body
-     * @return array{content: string, tokens_in: int, tokens_out: int, model: string}
+     * @return array{content: string, tokens_in: int, tokens_out: int, model: string, finish_reason: string|null}
      */
     protected static function result(array $body, string $defaultModel, ?int $estimatedIn = null, ?int $estimatedOut = null): array
     {
@@ -207,6 +210,7 @@ class OpenAiLlmClient implements LlmClient
             'tokens_in' => (int) ($body['usage']['prompt_tokens'] ?? $estimatedIn ?? 0),
             'tokens_out' => (int) ($body['usage']['completion_tokens'] ?? $estimatedOut ?? 0),
             'model' => $body['model'] ?? $defaultModel,
+            'finish_reason' => $body['choices'][0]['finish_reason'] ?? null,
         ];
     }
 

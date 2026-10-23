@@ -15,8 +15,17 @@ docker compose down
 echo "🚀 Starting all services..."
 docker compose up -d
 
+echo "🗄️  Running database migrations..."
+docker compose exec -T app php artisan migrate --force
+
+echo "🔗 Linking public storage..."
+docker compose exec -T app php artisan storage:link
+
 echo "🧹 Clearing Laravel caches..."
-docker compose exec app php artisan optimize:clear
+docker compose exec -T app php artisan optimize:clear
+
+echo "♻️  Restarting queue workers..."
+docker compose exec -T app php artisan queue:restart
 
 echo "🔎 Versión de PHP en ejecución:"
 docker compose exec -T app php -v | head -n 1

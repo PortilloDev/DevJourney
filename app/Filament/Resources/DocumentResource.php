@@ -40,7 +40,7 @@ class DocumentResource extends Resource
                 ->searchable()
                 ->preload()
                 ->nullable()
-                ->helperText('Optional — index this document alongside this post.'),
+                ->helperText('Link the document to a post to make it usable by that article\'s chat. Unlinked documents are not indexed.'),
             Forms\Components\FileUpload::make('path')
                 ->label('PDF file')
                 ->disk('local')

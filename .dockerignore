@@ -16,3 +16,4 @@ tests
 database/database.sqlite
 *.md
 !README.md
+!database/seeders/posts/*.md

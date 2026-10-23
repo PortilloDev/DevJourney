@@ -148,6 +148,8 @@ class ChatController
                     'tokens_out' => $meta['tokens_out'],
                     'context_chunks' => $meta['context_chunks'],
                     'model' => $meta['model'],
+                    'truncated' => $meta['truncated'],
+                    'related' => $meta['related'],
                     'usage_id' => $meta['usage_id'] ?? null,
                     'conversation_token' => $conversationToken,
                 ]);

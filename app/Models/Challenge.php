@@ -14,6 +14,7 @@ use App\Services\MarkdownRenderer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Carbon;
 
 /**
@@ -87,5 +88,29 @@ class Challenge extends Model
     public function getRouteKeyName(): string
     {
         return 'slug';
+    }
+
+    public function posts(): BelongsToMany
+    {
+        return $this->belongsToMany(Post::class);
+    }
+
+    /**
+     * Published challenges, ordered so those sharing tags with the post come
+     * first (R5). The shared tags are a hint, not a filter: every published
+     * challenge stays selectable.
+     *
+     * @param  Builder<Challenge>  $query
+     * @return Builder<Challenge>
+     */
+    public function scopeSuggestedForPost(Builder $query, Post $post): Builder
+    {
+        $tagIds = $post->tags()->pluck('tags.id')->all();
+
+        return $query
+            ->published()
+            ->withCount(['tags' => fn (Builder $tags): Builder => $tags->whereIn('tags.id', $tagIds)])
+            ->orderByDesc('tags_count')
+            ->orderBy('title');
     }
 }

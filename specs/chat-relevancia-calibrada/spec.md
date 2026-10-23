@@ -1,8 +1,8 @@
 ---
 feature: chat-relevancia-calibrada
-estado: borrador
+estado: implementada
 creada: 2026-10-08
-aprobada:
+aprobada: 2026-10-22
 ---
 
 # Relevancia del chat correctamente calibrada

@@ -53,9 +53,34 @@ class IndexContentJob implements ShouldQueue
             return false;
         }
 
+        if (! $this->typeIsIndexable($model)) {
+            return false;
+        }
+
         $status = $model->status ?? null;
         $value = $status instanceof \BackedEnum ? $status->value : $status;
 
         return $value === 'published';
+    }
+
+    /**
+     * A content type is indexed only when it is listed in
+     * `rag.indexing.source_types`, so no embeddings are paid for content that no
+     * retrieval path can reach (R6, D5).
+     */
+    private function typeIsIndexable(object $model): bool
+    {
+        $type = match ($model::class) {
+            Post::class => 'post',
+            Challenge::class => 'challenge',
+            Project::class => 'project',
+            default => null,
+        };
+
+        $types = config('rag.indexing.source_types', ['post', 'document']);
+
+        return $type !== null
+            && is_array($types)
+            && in_array($type, $types, true);
     }
 }

@@ -56,6 +56,21 @@
             {{-- Per-article AI chat --}}
             <x-chat-widget :enabled="filled(config('rag.api_key')) && $settings->chatVisible()" :post="$post" />
 
+            @if($relatedChallenges->isNotEmpty())
+                <section class="mt-16" aria-labelledby="related-challenges-heading">
+                    <h2 id="related-challenges-heading" class="mb-6 text-xl font-bold">Related challenges</h2>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        @foreach($relatedChallenges as $challenge)
+                            <a href="{{ route('challenges.show', $challenge) }}"
+                               class="rounded-xl border border-slate-200 p-4 transition hover:border-accent-400 dark:border-slate-800 dark:hover:border-accent-500">
+                                <h3 class="font-semibold text-slate-900 dark:text-slate-100">{{ $challenge->title }}</h3>
+                                <span class="mt-1 inline-block text-xs text-slate-500 dark:text-slate-400">{{ $challenge->difficulty->label() }}</span>
+                            </a>
+                        @endforeach
+                    </div>
+                </section>
+            @endif
+
             @if($related->isNotEmpty())
                 <section class="mt-16">
                     <h2 class="mb-6 text-xl font-bold">Related posts</h2>

@@ -28,6 +28,24 @@ class IndexDocumentJob implements ShouldQueue
             return;
         }
 
+        // A type disabled in rag.indexing.source_types must not spend embeddings.
+        // Remove any points from a previous run so it stops being retrievable.
+        if (! $this->typeIsIndexable()) {
+            $rag->deleteDocument($document);
+            $document->update(['status' => 'pending', 'indexed_at' => null]);
+
+            return;
+        }
+
+        // A document without a post is unreachable: the chat filters by post, so
+        // indexing it would only spend embeddings (R6).
+        if ($document->post_id === null) {
+            $rag->deleteDocument($document);
+            $document->update(['status' => 'pending', 'indexed_at' => null]);
+
+            return;
+        }
+
         // A non-public document is never indexed; if it was public before, its
         // points are removed so it stops being retrievable from the chat.
         if (! $document->is_public) {
@@ -65,5 +83,12 @@ class IndexDocumentJob implements ShouldQueue
 
             Log::error('Failed to index document', ['document' => $document->id, 'exception' => $e]);
         }
+    }
+
+    private function typeIsIndexable(): bool
+    {
+        $types = config('rag.indexing.source_types', ['post', 'document']);
+
+        return is_array($types) && in_array('document', $types, true);
     }
 }

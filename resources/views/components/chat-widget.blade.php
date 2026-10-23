@@ -44,6 +44,11 @@
                                     This answer was cut off before it finished. Please ask again.
                                 </p>
 
+                                <p x-show="message.truncated" x-cloak
+                                   class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    This answer was shortened because it reached the length limit.
+                                </p>
+
                                 <div x-show="hasSources(message)" x-cloak class="mt-2 flex flex-wrap items-center gap-2">
                                     <span class="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Sources</span>
                                     <template x-for="(source, j) in message.sources" :key="j">
@@ -55,6 +60,15 @@
                                                   class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400"
                                                   x-text="source.title"></span>
                                         </span>
+                                    </template>
+                                </div>
+
+                                <div x-show="message.related && message.related.length" x-cloak class="mt-2 flex flex-wrap items-center gap-2">
+                                    <span class="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Challenges</span>
+                                    <template x-for="(challenge, j) in (message.related || [])" :key="j">
+                                        <a :href="challenge.url"
+                                           class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600 transition hover:text-accent-600 dark:bg-slate-800 dark:text-slate-300"
+                                           x-text="challenge.title"></a>
                                     </template>
                                 </div>
 

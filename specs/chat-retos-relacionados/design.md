@@ -39,14 +39,15 @@
   R5; las etiquetas son una buena primera aproximación pero el criterio final es
   del administrador.
 - **D5.** Se añade `rag.indexing.source_types`
-  (`RAG_INDEXING_SOURCE_TYPES`, por defecto `post,document`) y `IndexContentJob`
-  no hace nada para un tipo que no esté en la lista. Motivo: R6; deja de pagarse
-  por embeddings inalcanzables sin cerrar la puerta a un futuro chat global, que
-  solo tendría que añadir el tipo a la lista.
+  (`RAG_INDEXING_SOURCE_TYPES`, por defecto `post,document`); `IndexContentJob`
+  no hace nada para un tipo que no esté en la lista, e `IndexDocumentJob` no
+  indexa documentos sin `post_id`, que ningún `postFilter` puede alcanzar.
+  Motivo: R6; deja de pagarse por embeddings inalcanzables sin cerrar la puerta a
+  un futuro chat global, que solo tendría que añadir el tipo a la lista.
 - **D6.** Los puntos de retos ya indexados se retiran con un comando de limpieza
-  puntual que recorre los retos publicados y llama a `deleteContent()`, que ya
-  existe. Motivo: liberar el índice de contenido que nadie consulta, sin una
-  migración de datos.
+  puntual que recorre todos los retos, publicados o no, y llama a
+  `deleteContent()`, que ya existe. Motivo: liberar el índice de contenido que
+  nadie consulta, sin una migración de datos.
 
 ## Cambios de datos
 
