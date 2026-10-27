@@ -155,16 +155,20 @@ la red interna.
 | Servicio | Imagen | Para qué |
 |---|---|---|
 | `prometheus` | `prom/prometheus` | TSDB de métricas; retención 30d (`--storage.tsdb.retention.time`). |
-| `grafana` | `grafana/grafana` | Dashboards + alertas (datasources Prometheus/Loki aprovisionados). |
+| `grafana` | `grafana/grafana` | Dashboards + alertas (datasources Prometheus/Loki y alerting aprovisionados). |
 | `loki` | `grafana/loki` | Logs agregados; retención 30d (`limits_config.retention_period`). |
 | `promtail` | `grafana/promtail` | Recolecta los logs stdout de los contenedores vía Docker socket. |
 | `node-exporter` | `prom/node-exporter` | CPU/RAM/disco/red del host. |
 | `cadvisor` | `gcr.io/cadvisor/cadvisor` | Métricas por contenedor (corre `privileged` para `/dev/kmsg`). |
 | `redis_exporter` | `oliver006/redis_exporter` | Métricas de Redis. |
 | `mysqld_exporter` | `prom/mysqld-exporter` | Métricas de MySQL (usa `devjourney` + `DB_PASSWORD`). |
+| `redis-insight` | `redis/redisinsight` | GUI de Redis en `redis.iabackendjourney.com` (basicauth de Traefik). |
 
-Configuración en `docker/observability/` (prometheus, loki, promtail, grafana
-provisioning). Arranque: `docker compose -f docker-compose.observability.yml up -d`.
+La app expone sus propias métricas (colas + Horizon) en `/prometheus`
+(`spatie/laravel-prometheus`), protegidas con basic-auth; Prometheus las scrapea
+con el secret `prometheus_scrape_password`. Configuración en `docker/observability/`
+(prometheus, loki, promtail, grafana provisioning). Arranque:
+`docker compose -f docker-compose.observability.yml up -d`.
 
 ### Volúmenes (producción)
 
@@ -173,7 +177,7 @@ provisioning). Arranque: `docker compose -f docker-compose.observability.yml up 
 | `portainer_data`, `mysql_data`, `meilisearch_data`, `qdrant_data` | Estado de cada servicio. |
 | `storage` | `storage/` de Laravel (incluye logs y exportaciones). |
 | `letsencrypt` | Certificados TLS. |
-| `prometheus_data`, `grafana_data`, `loki_data` | Datos del stack de observabilidad (definidos en `docker-compose.observability.yml`). |
+| `prometheus_data`, `grafana_data`, `loki_data`, `redis_insight_data` | Datos del stack de observabilidad (definidos en `docker-compose.observability.yml`). |
 
 ---
 
@@ -205,7 +209,7 @@ Claves agrupadas por dominio:
 | Búsqueda | `SCOUT_DRIVER`, `MEILISEARCH_HOST`, `MEILISEARCH_KEY` |
 | Admin | `FILAMENT_PATH`, `FILAMENT_ADMIN_EMAIL` |
 | RAG | `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_CHAT_MODEL`, `EMBEDDING_*`, `QDRANT_*`, `RAG_*` |
-| Observabilidad | `HORIZON_NAME`, `PULSE_ENABLED`, `PULSE_STORAGE_DRIVER`, `PULSE_STORAGE_KEEP`, `GF_SECURITY_ADMIN_PASSWORD` |
+| Observabilidad | `HORIZON_NAME`, `PULSE_ENABLED`, `PULSE_STORAGE_DRIVER`, `PULSE_STORAGE_KEEP`, `GF_SECURITY_ADMIN_PASSWORD`, `PROMETHEUS_USER`, `PROMETHEUS_PASSWORD`, `GRAFANA_ALERT_EMAIL`, `REDIS_INSIGHT_HTPASSWD` |
 | Analítica | `ANALYTICS_RETENTION_DAYS` |
 | Proxy/TLS | `TRUSTED_PROXIES`, `ACME_EMAIL` |
 
@@ -239,11 +243,16 @@ Claves agrupadas por dominio:
 - **Grafana** en `grafana.iabackendjourney.com` (login, `GF_SECURITY_ADMIN_PASSWORD`).
 - **Prometheus + Loki** como backends; **Promtail** agrega los logs stdout de los
   contenedores a Loki; exporters de node, cAdvisor, Redis y MySQL.
+- **Métricas de la app** en `/prometheus` (`spatie/laravel-prometheus`): colas y
+  Horizon, protegidas con basic-auth (`PROMETHEUS_USER`/`PROMETHEUS_PASSWORD`).
+- **Redis Insight** en `redis.iabackendjourney.com` (basicauth de Traefik).
+- **Alertas** aprovisionadas en Grafana (`docker/observability/grafana/provisioning/alerting/`):
+  contact point email, política por defecto y reglas (instance down, CPU/RAM/disco).
 - Definido en `docker-compose.observability.yml` (ver §4.8).
 
 ### 7.4 Planificado (sin implementar todavía)
 
-- Spatie Health, Redis Insight y alertas de Grafana — detalle en §10.
+- **Spatie Health** (dashboard de healthchecks de la app).
 
 ### 7.5 Retención y limpieza de logs
 
@@ -302,7 +311,10 @@ Checklist post-deploy (no olvidar):
 ## 9. Seguridad
 
 - Panel admin y dashboards (`/admin`, `/horizon`, `/pulse`) limitados por
-  `FILAMENT_ADMIN_EMAIL`.
+  `FILAMENT_ADMIN_EMAIL` (en local quedan abiertos).
+- El endpoint `/prometheus` exige basic-auth (`PROMETHEUS_USER`/`PROMETHEUS_PASSWORD`);
+  sin credenciales solo es accesible en `local` y **se rechaza en el resto de
+  entornos**, de modo que una contraseña olvidada no deja métricas abiertas en producción.
 - IPs del chat y analítica **hasheadas** o **cifradas en reposo** (`IpHasher`,
   casts `encrypted` en `Visit`).
 - Exportaciones de logs **cifradas** con la `APP_KEY` y fuera del disco público.
@@ -324,8 +336,6 @@ changelog (§11).
 | 3 | Usuario MySQL dedicado para `mysqld_exporter` | Crear un usuario con `PROCESS` + `REPLICATION CLIENT` (hoy usa el usuario de la app, `devjourney`). | Minimiza los privilegios del exporter. |
 | 4 | cAdvisor sin `privileged` | Evaluar la variante con mounts acotados (pierde métricas de kernel) en lugar de `privileged: true`. | Reduce la superficie de seguridad del agente. |
 | 5 | Spatie Laravel Health | Añadir el paquete con dashboard de healthchecks (BD, Redis, colas, disco). | Visibilidad del estado interno de la app, no solo de los contenedores. |
-| 6 | Redis Insight (GUI) | Contenedor `redis/redisinsight` expuesto detrás de `basicauth` de Traefik. | Inspección manual de claves/memoria de Redis. |
-| 7 | Alertas en Grafana | Contact points (email/Telegram) + reglas (cola atascada, 5xx, disco, CPU). | Notificación proactiva en lugar de revisión manual. |
 
 ---
 
@@ -338,3 +348,4 @@ changelog (§11).
 | 2026-10-23 | Añadidos Laravel Horizon y Laravel Pulse; supervisor pasa de `queue:work` a `horizon`. |
 | 2026-10-23 | Añadido `ext-pcntl` al stage `vendor` del `Dockerfile` (lo exige `laravel/horizon`; el build fallaba en `composer install`). |
 | 2026-10-23 | Añadido stack de observabilidad: `docker-compose.observability.yml` (Prometheus, Grafana, Loki, Promtail, node-exporter, cAdvisor, redis/mysql exporters) + red fija `devjourney`. |
+| 2026-10-23 | Fase 3: métricas de la app en `/prometheus` (`spatie/laravel-prometheus`, basic-auth), Redis Insight con basicauth y alertas aprovisionadas en Grafana. |

@@ -26,6 +26,8 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
+    secrets:
+      - prometheus_scrape_password
     volumes:
       - ./docker/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -40,6 +42,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?set GF_SECURITY_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: https://grafana.iabackendjourney.com
+      GRAFANA_ALERT_EMAIL: ${GRAFANA_ALERT_EMAIL:-}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -120,10 +123,34 @@ services:
     environment:
       DATA_SOURCE_NAME: "devjourney:${DB_PASSWORD}@(mysql:3306)/"
 
+  redis-insight:
+    image: redis/redisinsight:latest
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 256m
+    volumes:
+      - redis_insight_data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.basicauth.basicauth.users=${REDIS_INSIGHT_HTPASSWD:-}"
+      - "traefik.http.routers.redis-insight.rule=Host(`redis.iabackendjourney.com`)"
+      - "traefik.http.routers.redis-insight.entrypoints=websecure"
+      - "traefik.http.routers.redis-insight.tls.certresolver=le"
+      - "traefik.http.routers.redis-insight.middlewares=basicauth"
+      - "traefik.http.services.redis-insight.loadbalancer.server.port=5540"
+      - "traefik.http.routers.redis-insight-http.rule=Host(`redis.iabackendjourney.com`)"
+      - "traefik.http.routers.redis-insight-http.entrypoints=web"
+      - "traefik.http.routers.redis-insight-http.middlewares=redirect-to-https"
+
 volumes:
   prometheus_data:
   grafana_data:
   loki_data:
+  redis_insight_data:
+
+secrets:
+  prometheus_scrape_password:
+    environment: PROMETHEUS_PASSWORD
 
 networks:
   default:

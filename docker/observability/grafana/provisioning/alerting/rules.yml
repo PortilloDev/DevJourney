@@ -1,0 +1,83 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: devjourney
+    folder: General
+    interval: 1m
+    rules:
+      - uid: instance-down
+        title: Instance down
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: up == 0
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: Instance {{ $labels.instance }} is down
+        labels:
+          severity: critical
+
+      - uid: high-cpu
+        title: High CPU usage
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: CPU over 80% on {{ $labels.instance }}
+        labels:
+          severity: warning
+
+      - uid: high-memory
+        title: High memory usage
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: Memory over 90% on {{ $labels.instance }}
+        labels:
+          severity: warning
+
+      - uid: low-disk
+        title: Low disk space
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: node_filesystem_avail_bytes{fstype!=""} / node_filesystem_size_bytes{fstype!=""} < 0.1
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: Disk below 10% free on {{ $labels.instance }} ({{ $labels.mountpoint }})
+        labels:
+          severity: critical
