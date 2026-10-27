@@ -32,6 +32,7 @@ use Illuminate\Auth\Events\Logout;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
@@ -81,6 +82,18 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Paginator::useTailwind();
+
+        // The Pulse dashboard is gated by the same admin allow-list as the
+        // Filament panel. Local environments stay open for development.
+        Gate::define('viewPulse', function ($user = null) {
+            if ($this->app->environment('local')) {
+                return true;
+            }
+
+            $email = config('app.filament_admin_email');
+
+            return filled($email) && optional($user)->email === $email;
+        });
 
         // Make site settings and SEO meta available to every Blade view.
         View::share('settings', $this->app->make(SiteSettingService::class));
