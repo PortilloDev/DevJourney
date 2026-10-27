@@ -133,3 +133,10 @@ volumes:
   qdrant_data:
   storage:
   letsencrypt:
+
+# Red con nombre fijo para que el stack de observabilidad
+# (docker-compose.observability.yml) pueda compartirla como red externa y llegar
+# a mysql/redis/traefik sin acoplarse al nombre de red por defecto del proyecto.
+networks:
+  default:
+    name: devjourney
