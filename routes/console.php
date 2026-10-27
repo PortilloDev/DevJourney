@@ -11,3 +11,5 @@ Artisan::command('inspire', function () {
 Schedule::command('ai:prune-conversations')->daily();
 Schedule::command('logs:prune --export')->daily();
 Schedule::command('analytics:prune')->daily();
+Schedule::command('horizon:snapshot')->everyFiveMinutes();
+Schedule::command('pulse:check')->everyMinute();

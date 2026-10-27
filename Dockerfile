@@ -23,9 +23,10 @@ RUN npm run build
 ################################################################################
 FROM composer:2 AS vendor
 
-# filament/support requires ext-intl; the composer:2 base image doesn't ship it.
+# filament/support requires ext-intl and laravel/horizon requires ext-pcntl;
+# the composer:2 base image doesn't ship either.
 RUN apk add --no-cache icu-dev g++ make autoconf \
-    && docker-php-ext-install intl \
+    && docker-php-ext-install intl pcntl \
     && apk del g++ make autoconf
 
 WORKDIR /app
