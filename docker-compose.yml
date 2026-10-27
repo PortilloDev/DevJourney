@@ -1,9 +1,16 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     # Compañero obligatorio de php_admin_value[memory_limit] = -1: acota la
     # memoria de una petición desbocada al contenedor en vez de dejar que el
     # OOM killer del host elija víctima (mysql, qdrant...). Ajustar al host.
@@ -54,6 +61,7 @@ services:
   mysql:
     image: mysql:8.0
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - mysql_data:/var/lib/mysql
     environment:
@@ -70,10 +78,12 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
 
   meilisearch:
     image: getmeili/meilisearch:latest
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - meilisearch_data:/meili_data
     environment:
@@ -83,6 +93,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
@@ -94,6 +105,7 @@ services:
   traefik:
     image: traefik:v3.1
     restart: unless-stopped
+    logging: *default-logging
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
@@ -113,6 +125,7 @@ services:
   portainer:
       image: portainer/portainer-ce:latest
       restart: unless-stopped
+      logging: *default-logging
       volumes:
           - /var/run/docker.sock:/var/run/docker.sock:ro
           - portainer_data:/data
@@ -133,3 +146,10 @@ volumes:
   qdrant_data:
   storage:
   letsencrypt:
+
+# Red con nombre fijo para que el stack de observabilidad
+# (docker-compose.observability.yml) pueda compartirla como red externa y llegar
+# a mysql/redis/traefik sin acoplarse al nombre de red por defecto del proyecto.
+networks:
+  default:
+    name: devjourney

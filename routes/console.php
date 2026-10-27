@@ -9,3 +9,7 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('ai:prune-conversations')->daily();
+Schedule::command('logs:prune --export')->daily();
+Schedule::command('analytics:prune')->daily();
+Schedule::command('horizon:snapshot')->everyFiveMinutes();
+Schedule::command('pulse:check')->everyMinute();

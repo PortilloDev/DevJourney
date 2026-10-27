@@ -3,7 +3,9 @@
 DevJourney — a Laravel 11 / PHP 8.4 monolith. Public site in Blade + Tailwind +
 Alpine (Vite), admin in Filament v3 at `/admin`, MySQL 8 in prod and SQLite for
 tests, Redis for cache/queues/sessions. Product context lives in `README.md` and
-`devjourney-technical-spec.md`; read them for domain background.
+`devjourney-technical-spec.md`; read them for domain background. **Infrastructure
+(services, config, deploy, observability) lives in `docs/infrastructure.md` — a
+living document that must be updated in the same commit as any infra change.**
 
 This file is the single source of truth for agent guidance. Do not duplicate it.
 
@@ -72,6 +74,9 @@ CI (`.github/workflows/ci.yml`) is the definition of done: `pint --test`,
 - Reindex RAG content after deploy so vector payloads match the new origin.
 - Do **not** `config:cache` at image build time: the runtime `.env` is mounted and
   a build-time cache would ignore it.
+- **Any infra change (service, port, volume, env var, retention, scheduler) must
+  also update `docs/infrastructure.md`** in the same commit — it is a living
+  document, not a snapshot.
 
 ## Layout
 

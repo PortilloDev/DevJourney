@@ -23,6 +23,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Log retention
+    |--------------------------------------------------------------------------
+    |
+    | `retention_days` bounds how long database logs (`app_logs`) are kept; the
+    | scheduled `logs:prune` command deletes older rows. `export_retention_days`
+    | bounds how long the encrypted exports produced by that command are kept on
+    | disk before being deleted.
+    |
+    */
+    'retention_days' => (int) env('LOG_RETENTION_DAYS', 30),
+    'export_retention_days' => (int) env('LOG_EXPORT_RETENTION_DAYS', 90),
+
+    /*
+    |--------------------------------------------------------------------------
     | Deprecations Log Channel
     |--------------------------------------------------------------------------
     |
@@ -55,7 +69,7 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', env('LOG_STACK', 'single,applog')),
+            'channels' => explode(',', env('LOG_STACK', 'daily,applog')),
             'ignore_exceptions' => false,
         ],
 

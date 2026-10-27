@@ -1,8 +1,15 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
+    logging: *default-logging
     volumes:
       - .:/var/www/html
       - vendor:/var/www/html/vendor
@@ -38,6 +45,7 @@ services:
 
   mysql:
     image: mysql:8.0
+    logging: *default-logging
     ports:
       - "33008:3306"
     volumes:
@@ -56,6 +64,7 @@ services:
   portainer:
     image: portainer/portainer-ce:latest
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - portainer_data:/data
@@ -70,11 +79,13 @@ services:
 
   redis:
     image: redis:7-alpine
+    logging: *default-logging
     ports:
       - "6380:6379"
 
   meilisearch:
     image: getmeili/meilisearch:latest
+    logging: *default-logging
     ports:
       - "7700:7700"
     volumes:
@@ -84,6 +95,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -94,6 +106,7 @@ services:
 
   mailpit:
     image: axllent/mailpit
+    logging: *default-logging
     ports:
       - "8025:8025"
       - "1025:1025"
